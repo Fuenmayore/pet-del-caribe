@@ -9,48 +9,49 @@ return new class extends Migration
     /**
      * Run the migrations.
      */
-    public function up(): void {
+// database/migrations/xxxx_xx_xx_update_produccion_tables.php
+
+public function up(): void {
+        // 1. Configuración del Turno (Flexible para materiales y parámetros)
     Schema::create('produccion_config', function (Blueprint $table) {
         $table->uuid('id')->primary();
         $table->foreignUuid('turno_id')->constrained('turnos')->onDelete('restrict');
-        $table->string('referencia');
-        $table->integer('num_cavidades');
-        $table->string('materia_prima');
-        $table->decimal('porcentaje_molido', 5, 2);
+        
+        // Cambiamos 'referencia' por 'producto_id' para mayor claridad
+        // Cambiar a nullable() para que el Paso 1 no falle
+        $table->foreignId('producto_id')->nullable()->constrained('productos');
+        // JSON: Aquí guardamos el color y la mezcla de materiales
+        // Ejemplo: {"color": "ROJO", "materiales": [{"id":1, "cantidad": 50}, {"id":2, "cantidad": 20}]}
+        $table->json('mezcla_materiales')->nullable(); 
+        
         $table->softDeletes();
         $table->timestamps();
     });
 
+    // 2. Producción Horaria (Consolidada con PNC para evitar millones de filas extras)
     Schema::create('produccion_horaria', function (Blueprint $table) {
         $table->uuid('id')->primary();
         $table->foreignUuid('config_id')->constrained('produccion_config')->onDelete('restrict');
         $table->time('hora');
-        $table->string('num_vale_inyectora');
+        $table->string('num_vale_inyectora')->nullable();
         $table->integer('unidades_buenas');
+        
+        // JSON: Aquí guardamos todo el PNC (malas, contaminadas, torta, causa)
+        // Ejemplo: {"malas": 5, "contaminadas": 2, "torta": 1, "causa": "Punto negro"}
+        $table->json('pnc_detalle')->nullable(); 
+        
         $table->softDeletes();
         $table->timestamps();
     });
 
-    Schema::create('registros_pnc', function (Blueprint $table) {
-        $table->uuid('id')->primary();
-        $table->foreignUuid('produccion_hora_id')->constrained('produccion_horaria')->onDelete('restrict');
-        $table->foreignId('anomalia_id')->constrained('anomalias_produccion')->onDelete('restrict');
-        $table->integer('unid_malas')->default(0);
-        $table->integer('unid_contaminadas')->default(0);
-        $table->integer('unid_torta')->default(0);
-        $table->text('causa')->nullable();
-        $table->boolean('sello_reproceso')->default(false);
-        $table->softDeletes();
-        $table->timestamps();
-    });
-
+    // 3. Tiempos Perdidos (Mantenemos por separado pero con observaciones flexibles)
     Schema::create('tiempos_perdidos', function (Blueprint $table) {
         $table->uuid('id')->primary();
         $table->foreignUuid('turno_id')->constrained('turnos')->onDelete('restrict');
         $table->string('item_motivo');
         $table->time('hora_inicial');
         $table->integer('tiempo_perdido_min');
-        $table->text('observaciones')->nullable();
+        $table->json('detalle_paro')->nullable(); // JSON para futuras métricas de falla
         $table->softDeletes();
         $table->timestamps();
     });
