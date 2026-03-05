@@ -7,133 +7,175 @@ use App\Models\Turno;
 use App\Models\Producto;
 use App\Models\Maquina;
 use App\Models\ProduccionHoraria;
-use App\Models\RegistrosPnc;
+use App\Models\AnomaliaProduccion;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 
-
 class ProduccionController extends Controller
 {
     /**
-     * Dashboard Principal: Muestra máquinas libres y turnos activos del operario.
+     * Dashboard Principal.
+     * Orden: 1. Activos, 2. Libres, 3. Historial (Paginado)
      */
-    public function index()
+    public function index(Request $request)
 {
     return Inertia::render('Produccion/Inyeccion/Index', [
+        // 1. MÁQUINAS LIBRES (Para iniciar turno)
+        // Solo máquinas de inyección que no tengan turnos abiertos
         'maquinasLibres' => Maquina::where('sub_area', 'Inyeccion')
             ->whereDoesntHave('turnos', function ($query) {
                 $query->where('estado', 'Abierto');
             })->get(),
 
-        'misTurnosActivos' => Turno::with(['maquina', 'produccionConfig.producto']) // <--- Cargamos el producto
+        // 2. TURNOS ACTIVOS DEL USUARIO
+        // Cargamos la config activa y todas las configuraciones para detectar cambios de referencia
+        'misTurnosActivos' => Turno::with(['maquina', 'configActiva.producto', 'configuraciones'])
             ->where('operario_id', auth()->id())
             ->where('estado', 'Abierto')
-            ->get()
+            ->get(),
+
+        // 3. HISTORIAL GENERAL (Paginado para eficiencia)
+        // Agregamos 'operario' para mostrar quién trabajó cada turno
+        'historialTurnos' => Turno::with([
+                'maquina', 
+                'operario', // <--- Agregamos la relación del usuario/operario
+                'configuraciones.producto', 
+                'configuraciones.horasProduccion'
+            ])
+            ->orderBy('fecha', 'desc')
+            ->orderBy('numero_turno', 'desc')
+            ->paginate(15) // Aumentamos a 15 para una mejor vista en tablas
+            ->withQueryString(),
     ]);
 }
 
+public function config(Maquina $maquina)
+    {
+        return Inertia::render('Produccion/Inyeccion/Config', ['maquina' => $maquina]);
+    }
 
+    public function store(Request $request)
+    {
+        $request->validate([
+            'maquina_id'   => 'required|exists:maquinas,id', 
+            'fecha'        => 'required|date',
+            'turno'        => 'required|integer',
+            'duracion_turno' => 'required|integer|in:8,12', 
+            'cod_operario' => 'required|string',
+            'supervisor'   => 'required|string',
+            'area'         => 'required|string', 
+        ]);
 
-    /**
-     * Formulario de configuración para una máquina específica.
-     */
-    public function config(Maquina $maquina)
-{
-    return Inertia::render('Produccion/Inyeccion/Config', [
-        'maquina' => $maquina,
-        // Filtramos solo los productos del área de Inyección
-        'productos' => Producto::where('area', 'LIKE', '%INYECCIÓN%')
-                                ->orderBy('descripcion')
-                                ->get(['id', 'item', 'descripcion', 'ciclo', 'cavidades']),
-        // Lista base para el buscador de materias primas
-        'materiasBase' => [
-            ['id' => 1, 'nombre' => 'PET VIRGEN'],
-            ['id' => 2, 'nombre' => 'PET MOLIDO'],
-            ['id' => 3, 'nombre' => 'MASTERBATCH AZUL'],
-            ['id' => 4, 'nombre' => 'MASTERBATCH VERDE'],
-        ]
-    ]);
-}
-
-    /**
-     * Inicia un nuevo turno (Crea Turno + Configuración F1).
-     */
-public function store(Request $request)
-{
-    // 1. Validamos (Asegúrate que estos nombres coincidan con tu useForm en Vue)
-    $request->validate([
-        'maquina_id'   => 'required|exists:maquinas,id', 
-        'fecha'        => 'required|date',
-        'turno'        => 'required|integer', // Este es el dato que viene de Vue
-        'cod_operario' => 'required|string',
-        'supervisor'   => 'required|string',
-    ]);
-
-    return DB::transaction(function () use ($request) {
-        // 2. Creamos el Turno
-        // AQUÍ ESTABA EL ERROR: La columna se llama 'numero_turno'
         $turno = Turno::create([
             'maquina_id'   => $request->maquina_id,
             'fecha'        => $request->fecha,
-            'numero_turno' => $request->turno, // MAPEO: columna 'numero_turno' <--- dato 'turno'
+            'numero_turno' => $request->turno,
             'operario_id'  => auth()->id(),
             'supervisor'   => $request->supervisor,
+            'area'         => $request->area, 
+            'duracion_turno' => $request->duracion_turno,
             'estado'       => 'Abierto',
         ]);
 
-
-
-        // 3. Redirección
         return redirect()->route('produccion.registro', $turno->id);
-    });
-}
+    }
 
-    /**
-     * Vista del Reporte Horario (F1) para una máquina específica.
-     */
     public function registro(Turno $turno)
     {
+        $turno->load([
+            'maquina', 
+            'configActiva.producto', 
+            'configuraciones' => function($query) {
+                $query->with(['producto', 'horasProduccion'])->orderBy('created_at', 'asc');
+            }
+        ]);
+
         return Inertia::render('Produccion/Inyeccion/RegistroHorario', [
-            'turno' => $turno->load('maquina', 'produccionConfig.producto') // <--- También aquí
+            'turno' => $turno,
+            'productos' => Producto::where('area', 'LIKE', '%INYECCIÓN%')
+                ->orderBy('descripcion')
+                ->get(['id', 'item', 'descripcion', 'ciclo', 'cavidades']),
+            'anomalias' => AnomaliaProduccion::all(),
         ]);
     }
 
-    // app/Http/Controllers/Produccion/ProduccionController.php
+        public function guardarConfiguracion(Request $request, Turno $turno)
+    {
+        $request->validate([
+            'producto_id' => 'required|exists:productos,id',
+            'color'       => 'nullable|string|max:50',
+            'mezcla'      => 'required|array',
+        ]);
 
-public function guardarHora(Request $request)
-{
-    // 1. Validamos los datos que vienen del F1 (Vue)
-    $validated = $request->validate([
-        'config_id' => 'required|uuid|exists:produccion_config,id',
-        'hora' => 'required',
-        'unidades_buenas' => 'required|integer|min:0',
-        'pnc' => 'array' // Lista de anomalías encontradas en esa hora
-    ]);
-
-    // 2. Usamos una transacción para asegurar que se guarde todo o nada
-    return DB::transaction(function () use ($validated) {
-        
-        // Creamos el registro horario (F1)
-        $hora = ProduccionHoraria::updateOrCreate(
-            [
-                'config_id' => $validated['config_id'],
-                'hora' => $validated['hora']
+        $turno->configuraciones()->create([
+            'producto_id'         => $request->producto_id,
+            // Guardamos el color y los materiales juntos en el JSON
+            'mezcla_materiales'   => [
+                'color'      => strtoupper($request->color),
+                'materiales' => $request->mezcla
             ],
-            ['unidades_buenas' => $validated['unidades_buenas']]
+        ]);
+
+        $turno->unsetRelation('configActiva');
+        $turno->unsetRelation('configuraciones');
+        $turno->load(['configActiva.producto', 'configuraciones.producto', 'configuraciones.horasProduccion']);
+
+        return back()->with('success', 'Referencia Iniciada');
+    }
+
+        public function guardarHora(Request $request)
+    {
+        // Validamos los datos recibidos del frontend
+        $validated = $request->validate([
+            'config_id'       => 'required|exists:produccion_config,id',
+            'hora'            => 'required',
+            'unidades_buenas' => 'required|integer|min:0',
+            'num_vale'        => 'nullable|string',
+            // 'pnc' ahora incluye: cavidades_reales, ciclo_real, defectos, paros e inspeccion
+            'pnc'             => 'nullable|array' 
+        ]);
+
+        // Guardamos o actualizamos el registro de la hora específica
+        ProduccionHoraria::updateOrCreate(
+            [
+                'config_id' => $validated['config_id'], 
+                'hora'      => $validated['hora']
+            ],
+            [
+                'unidades_buenas'     => $validated['unidades_buenas'], 
+                'num_vale_inyectora'  => $validated['num_vale'], 
+                // Se guarda el objeto completo (incluyendo la inspección de preformas) en la columna JSON
+                'pnc_detalle'         => $validated['pnc'] ?? []
+            ]
         );
 
-        // Si hay desperdicio (PNC), lo registramos vinculándolo a la hora
-        if (!empty($validated['pnc'])) {
-            foreach ($validated['pnc'] as $falla) {
-                RegistrosPnc::updateOrCreate(
-                    ['produccion_hora_id' => $hora->id, 'anomalia_id' => $falla['id']],
-                    ['unid_malas' => $falla['cantidad']]
-                );
-            }
-        }
+        return back()->with('message', 'Hora e Inspección de Preformas sincronizadas');
+    }
 
-        return response()->json(['status' => 'Sincronizado', 'id' => $hora->id]);
-    });
-}
+    /**
+     * FINALIZAR TURNO.
+     * Cambia el estado para que pase al historial y libere la máquina.
+     */
+    public function finalizar(Turno $turno)
+    {
+        $turno->update(['estado' => 'Cerrado']);
+        return redirect()->route('produccion.index')->with('message', 'Turno finalizado con éxito');
+    }
+
+    /**
+     * ELIMINAR REGISTRO (Soft Delete).
+     */
+    public function destroy(Turno $turno)
+    {
+        DB::transaction(function () use ($turno) {
+            foreach ($turno->configuraciones as $config) {
+                $config->horasProduccion()->delete(); 
+            }
+            $turno->configuraciones()->delete();
+            $turno->delete(); 
+        });
+
+        return redirect()->route('produccion.index')->with('message', 'Turno cancelado con éxito');
+    }
 }
