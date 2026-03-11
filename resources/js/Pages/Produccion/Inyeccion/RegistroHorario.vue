@@ -6,17 +6,18 @@ import { useForm, router, Head } from '@inertiajs/vue3';
 const props = defineProps({ 
     turno: Object, 
     productos: Array, 
-    anomalias: Array 
+    anomalias: Array,
+    materiales: Array,
+    pncCatalogo: Array,
+    paradasCatalogo: Array
 });
 
-// --- FUNCIÓN PARA FINALIZAR TURNO ---
 const finalizarTurno = () => {
     if (confirm('¿Estás seguro de finalizar el turno? Una vez cerrado pasará al historial y no podrás registrar más horas.')) {
         router.post(route('produccion.finalizar', props.turno.id));
     }
 };
 
-// --- KPIs CALCULADOS ---
 const kpisCalculados = computed(() => {
     let totalBuenas = 0;
     let totalMalasKg = 0;
@@ -65,20 +66,34 @@ const modalPnc = ref(false);
 const modalParo = ref(false);
 const indexActivo = ref(null);
 
-const catalogoFallas = [
-    { codigo: 3, falla: 'Fluido electrico externo', categoria: 'ADMIN' },
-    { codigo: 4, falla: 'Falla aire', categoria: 'PERIFERICOS' },
-    { codigo: 5, falla: 'Sistema enfriamiento', categoria: 'PERIFERICOS' },
-];
-
-const listaDefectosCalidad = [
-    { id: 1, nombre: 'Quemada' }, { id: 2, nombre: 'Rayas' }, { id: 3, nombre: 'Burbujas Fondo' },
-    { id: 4, nombre: 'Burbujas Cuerpo' }, { id: 6, nombre: 'Punto Negro' }, { id: 7, nombre: 'Opacidad' },
-    { id: 10, nombre: 'Fractura' }, { id: 13, nombre: 'Rebaba Cierre' }, { id: 15, nombre: 'Cuello Jirafa' },
-];
+const catalogoFallas = computed(() => props.paradasCatalogo);
+const listaDefectosCalidad = computed(() => props.pncCatalogo);
 
 const modalInspeccion = ref(false);
 const cavidadSeleccionada = ref(null);
+
+// --- NUEVO: ESTADO Y FORMULARIO PARA PERFIL DE OPERACIÓN ---
+const modalPerfil = ref(false);
+const perfilForm = useForm({
+    temperaturas: { zona1: '', zona2: '', zona3: '', zona4: '', boquilla: '', molde: '' },
+    tiempos: { inyeccion: '', sostenimiento: '', enfriamiento: '', ciclo_maquina: '' },
+    presiones: { inyeccion: '', sostenimiento: '', contrapresion: '' },
+    observaciones: ''
+});
+
+const guardarPerfilOperacion = () => {
+    // Almacena el perfil ligado a la configuración activa
+    // NOTA: Deberás crear esta ruta en tu web.php y controlador en el próximo paso
+    /*
+    perfilForm.post(route('produccion.guardarPerfil', props.turno.config_activa.id), {
+        preserveScroll: true,
+        onSuccess: () => { modalPerfil.value = false; }
+    });
+    */
+    alert("Función lista para conectar al Backend. Los datos se recolectaron correctamente.");
+    modalPerfil.value = false;
+};
+// -----------------------------------------------------------
 
 const calcularDiferenciaMinutos = (inicio, fin) => {
     if (!inicio || !fin) return 0;
@@ -112,26 +127,26 @@ const generarLoteSugerido = () => {
 };
 
 const generarHorasPorTurno = (numeroTurno, duracion = 8) => {
-    let horaInicio = 6;
+    let horaInicio = 7;
     if (duracion == 12) {
-        horaInicio = (numeroTurno == 1) ? 6 : 18;
+        horaInicio = (numeroTurno == 1) ? 7 : 19;
     } else {
-        horaInicio = (numeroTurno == 1) ? 6 : (numeroTurno == 2 ? 14 : 22);
+        horaInicio = (numeroTurno == 1) ? 7 : (numeroTurno == 2 ? 15 : 23);
     }
     return Array.from({ length: duracion }, (_, i) => ({
         hora: `${String((horaInicio + i) % 24).padStart(2, '0')}:00`,
-        num_vale: '', ciclo: '', buenas: 0, cav: 0, 
+        num_vale: '', ciclo: '', buenas: '', cav: '', 
         pnc: [], paros: [], 
         inspeccion: [], 
         inspeccion_completada: false, 
         procesando: false, guardado: false,
+        modificado: false, 
         referencia_nombre: null, config_id: null
     }));
 };
 
 const registros = ref(generarHorasPorTurno(props.turno.numero_turno, props.turno.duracion_turno));
 
-// --- MEJORA: CÁLCULO DE BUENAS ---
 const calcularBuenasAutomatico = (index) => {
     const reg = registros.value[index];
     const ciclo = parseFloat(reg.ciclo);
@@ -148,7 +163,7 @@ const cargarDatosExistentes = () => {
             if (horas) {
                 horas.forEach(dbHora => {
                     const fila = registros.value.find(r => dbHora.hora.startsWith(r.hora));
-                    if (fila) {
+                    if (fila && !fila.modificado) {
                         fila.num_vale = dbHora.num_vale_inyectora;
                         fila.buenas = dbHora.unidades_buenas;
                         if(dbHora.pnc_detalle?.ciclo_real) fila.ciclo = dbHora.pnc_detalle.ciclo_real;
@@ -174,7 +189,7 @@ onMounted(() => {
         registros.value[0].num_vale = generarLoteSugerido();
     }
     pollInterval = setInterval(() => {
-        const estaOcupado = registros.value.some(r => r.procesando) || editandoConfig.value || modalPnc.value || modalParo.value || modalInspeccion.value;
+        const estaOcupado = registros.value.some(r => r.procesando) || editandoConfig.value || modalPnc.value || modalParo.value || modalInspeccion.value || modalPerfil.value;
         if (!estaOcupado) {
             router.reload({ 
                 only: ['turno'], 
@@ -193,10 +208,10 @@ const configForm = useForm({
     producto_id: null,
     referencia_nombre: '',
     color: props.turno.config_activa?.mezcla_materiales?.color || '',
-    mezcla: props.turno.config_activa?.mezcla_materiales?.materiales || [{ nombre: 'PET VIRGEN', porcentaje: 100 }],
+    mezcla: props.turno.config_activa?.mezcla_materiales?.materiales || [{ materia_prima_id: '', porcentaje: '' }],
 });
 
-const agregarFilaMaterial = () => configForm.mezcla.push({ nombre: '', porcentaje: 0 });
+const agregarFilaMaterial = () => configForm.mezcla.push({ materia_prima_id: '', porcentaje: '' });
 const quitarFilaMaterial = (index) => configForm.mezcla.length > 1 && configForm.mezcla.splice(index, 1);
 
 const guardarConfig = () => {
@@ -206,12 +221,20 @@ const guardarConfig = () => {
     });
 };
 
-const abrirPnc = (index) => { indexActivo.value = index; modalPnc.value = true; };
+const abrirPnc = (index) => { 
+    indexActivo.value = index; 
+    registros.value[index].modificado = true;
+    modalPnc.value = true; 
+};
 const agregarDefecto = () => { 
-    registros.value[indexActivo.value].pnc.push({ anomalia_id: '', malas_kg: 0, cont_kg: 0, torta_kg: 0, causa: '' }); 
+    registros.value[indexActivo.value].pnc.push({ anomalia_id: '', malas_kg: '', cont_kg: '', torta_kg: '', causa: '' }); 
 };
 
-const abrirParo = (index) => { indexActivo.value = index; modalParo.value = true; };
+const abrirParo = (index) => { 
+    indexActivo.value = index; 
+    registros.value[index].modificado = true; 
+    modalParo.value = true; 
+};
 const agregarParo = () => { 
     registros.value[indexActivo.value].paros.push({ falla_id: '', categoria: '', hora_inicio: '', hora_fin: '', minutos: 0, motivo: '' }); 
 };
@@ -223,6 +246,7 @@ const abrirInspeccion = (index) => {
         return;
     }
     indexActivo.value = index; 
+    fila.modificado = true; 
     modalInspeccion.value = true; 
 };
 
@@ -245,11 +269,11 @@ const finalizarInspeccion = () => {
     const index = indexActivo.value;
     registros.value[index].inspeccion_completada = true;
     modalInspeccion.value = false;
-    syncHora(index); // Guardado automático
+    syncHora(index); 
 };
 
 const actualizarCategoriaParo = (p) => {
-    const seleccion = catalogoFallas.find(f => f.codigo === p.falla_id);
+    const seleccion = catalogoFallas.value.find(f => f.id === p.falla_id || f.codigo === p.falla_id);
     if (seleccion) p.categoria = seleccion.categoria;
 };
 
@@ -276,6 +300,7 @@ const syncHora = (index) => {
         onSuccess: () => { 
             fila.procesando = false; 
             fila.guardado = true;
+            fila.modificado = false; 
             fila.referencia_nombre = props.turno.config_activa.producto?.descripcion;
         },
         onError: () => fila.procesando = false
@@ -295,7 +320,12 @@ const seleccionarProducto = (p) => {
 };
 
 const currentHourString = computed(() => `${String(new Date().getHours()).padStart(2, '0')}:00`);
-const clonarVale = (i) => { if (i < registros.value.length - 1) registros.value[i+1].num_vale = registros.value[i].num_vale; };
+const clonarVale = (i) => { 
+    if (i < registros.value.length - 1) {
+        registros.value[i+1].num_vale = registros.value[i].num_vale; 
+        registros.value[i+1].modificado = true; 
+    }
+};
 </script>
 
 <template>
@@ -357,7 +387,12 @@ const clonarVale = (i) => { if (i < registros.value.length - 1) registros.value[
                         </div>
                     </div>
                     
-                    <div class="flex items-center gap-3 w-full md:w-auto justify-end">
+                    <div class="flex flex-wrap items-center gap-2 md:gap-3 w-full md:w-auto justify-end">
+                        <button v-if="esFaseActiva" @click="modalPerfil = true" class="px-5 py-2.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white shadow-sm flex items-center gap-2 transition-all">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                            Perfil Operación
+                        </button>
+
                         <button v-if="esFaseActiva" @click="finalizarTurno" 
                             class="px-4 py-2.5 bg-transparent border-2 border-red-600/30 text-red-500 rounded-xl text-[9px] font-black uppercase hover:bg-red-600 hover:text-white transition-all">
                             Finalizar Turno
@@ -398,7 +433,13 @@ const clonarVale = (i) => { if (i < registros.value.length - 1) registros.value[
                         <div class="lg:col-span-6 p-6 md:p-8 bg-slate-50/50 pr-16"> 
                             <div class="flex justify-between items-center mb-4"><h3 class="text-[10px] font-black text-slate-800 uppercase tracking-widest">3. Mezcla (%)</h3><button @click="agregarFilaMaterial" class="text-[9px] font-black text-pet-blue uppercase px-3 py-1.5 bg-white rounded-lg shadow-sm">+ Añadir</button></div>
                             <div class="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                                <div v-for="(m, i) in configForm.mezcla" :key="i" class="flex gap-2 mb-2 animate-in slide-in-from-right-4"><input type="text" v-model="m.nombre" class="flex-1 h-10 bg-white border-none rounded-xl text-[10px] font-bold shadow-sm" placeholder="Materia Prima..."><div class="w-20 flex items-center bg-white rounded-xl px-2 shadow-sm"><input type="number" v-model="m.porcentaje" class="w-full border-none text-right font-black text-pet-blue text-xs focus:ring-0"><span class="text-[8px] font-bold text-slate-300 ml-1">%</span></div><button v-if="configForm.mezcla.length > 1" @click="quitarFilaMaterial(i)" class="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 transition-colors"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></button></div>
+                                <div v-for="(m, i) in configForm.mezcla" :key="i" class="flex gap-2 mb-2 animate-in slide-in-from-right-4">
+                                    <select v-model="m.materia_prima_id" class="flex-1 h-10 bg-white border-none rounded-xl text-[10px] font-bold shadow-sm text-slate-700">
+                                        <option value="" disabled>Seleccionar Material...</option>
+                                        <option v-for="mat in materiales" :key="mat.id" :value="mat.id">{{ mat.nombre }}</option>
+                                    </select>
+                                    <div class="w-20 flex items-center bg-white rounded-xl px-2 shadow-sm"><input type="number" v-model="m.porcentaje" class="w-full border-none text-right font-black text-pet-blue text-xs focus:ring-0"><span class="text-[8px] font-bold text-slate-300 ml-1">%</span></div><button v-if="configForm.mezcla.length > 1" @click="quitarFilaMaterial(i)" class="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 transition-colors"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></button>
+                                </div>
                             </div>
                             <div class="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between"><p class="text-xl font-black font-mono" :class="totalMezcla === 100 ? 'text-pet-green' : 'text-red-500'">{{ totalMezcla }}%</p><button @click="guardarConfig" :disabled="!configForm.producto_id || totalMezcla !== 100" class="px-6 h-12 bg-pet-green text-white rounded-xl font-black text-[10px] uppercase shadow-lg disabled:opacity-20 transition-all">Guardar 🚀</button></div>
                         </div>
@@ -427,21 +468,21 @@ const clonarVale = (i) => { if (i < registros.value.length - 1) registros.value[
 
                         <div class="lg:col-span-3 flex flex-col">
                             <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 ml-1 tracking-widest">Vale / Lote</span>
-                            <div class="flex items-center gap-2"><input type="text" v-model="reg.num_vale" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 text-sm shadow-inner uppercase" placeholder="0000"><button @click="clonarVale(i)" class="p-2 text-slate-200 hover:text-pet-blue shrink-0 transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg></button></div>
+                            <div class="flex items-center gap-2"><input type="text" v-model="reg.num_vale" @input="reg.modificado = true" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 text-sm shadow-inner uppercase" placeholder="0000"><button @click="clonarVale(i)" class="p-2 text-slate-200 hover:text-pet-blue shrink-0 transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg></button></div>
                         </div>
 
                         <div class="grid grid-cols-3 lg:contents gap-3">
                              <div class="lg:col-span-1 flex flex-col">
                                 <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 text-center tracking-widest">Ciclo</span>
-                                <input type="number" step="0.1" v-model="reg.ciclo" @input="calcularBuenasAutomatico(i)" class="w-full h-11 bg-amber-50/40 border-none rounded-xl text-center font-black text-amber-600 text-sm shadow-inner" placeholder="0.0">
+                                <input type="number" step="0.1" v-model="reg.ciclo" @input="calcularBuenasAutomatico(i); reg.modificado = true" class="w-full h-11 bg-amber-50/40 border-none rounded-xl text-center font-black text-amber-600 text-sm shadow-inner" placeholder="0.0">
                              </div>
                              <div class="lg:col-span-1 flex flex-col">
                                 <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 text-center tracking-widest">Buenas</span>
-                                <input type="number" v-model="reg.buenas" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-lg text-pet-blue shadow-inner" placeholder="0">
+                                <input type="number" v-model="reg.buenas" @input="reg.modificado = true" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-lg text-pet-blue shadow-inner" placeholder="0">
                              </div>
                              <div class="lg:col-span-1 flex flex-col">
                                 <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 text-center tracking-widest">Cav</span>
-                                <input type="number" v-model="reg.cav" @input="calcularBuenasAutomatico(i)" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-lg text-slate-400 shadow-inner" placeholder="0">
+                                <input type="number" v-model="reg.cav" @input="calcularBuenasAutomatico(i); reg.modificado = true" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-lg text-slate-400 shadow-inner" placeholder="0">
                              </div>
                         </div>
                         
@@ -470,6 +511,74 @@ const clonarVale = (i) => { if (i < registros.value.length - 1) registros.value[
         </div>
 
         <transition name="fade">
+            <div v-if="modalPerfil" class="fixed inset-0 z-[150] flex items-center justify-center p-2 sm:p-4 bg-slate-900/80 backdrop-blur-md">
+                <div class="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[95vh]">
+                    <div class="p-6 border-b flex justify-between items-center bg-indigo-50/50">
+                        <div>
+                            <h3 class="text-lg font-black text-indigo-900 uppercase leading-none">Seguimiento Perfil de Operación</h3>
+                            <p class="text-[10px] font-bold text-indigo-500 uppercase mt-1">Referencia: {{ faseAMostrar?.producto?.descripcion || 'No definida' }}</p>
+                        </div>
+                        <button @click="modalPerfil = false" class="h-10 w-10 bg-white rounded-full flex items-center justify-center text-slate-400 shadow-sm hover:bg-slate-100 transition-colors">✕</button>
+                    </div>
+                    
+                    <div class="p-6 overflow-y-auto custom-scrollbar flex-grow space-y-8">
+                        <div>
+                            <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                                <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z"></path></svg>
+                                Temperaturas (°C)
+                            </h4>
+                            <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ZONA 1</span><input v-model="perfilForm.temperaturas.zona1" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ZONA 2</span><input v-model="perfilForm.temperaturas.zona2" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ZONA 3</span><input v-model="perfilForm.temperaturas.zona3" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ZONA 4</span><input v-model="perfilForm.temperaturas.zona4" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">BOQUILLA</span><input v-model="perfilForm.temperaturas.boquilla" type="number" class="w-full h-11 bg-amber-50/50 border-none rounded-xl text-center font-black text-amber-600 shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">MOLDE</span><input v-model="perfilForm.temperaturas.molde" type="number" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-pet-blue shadow-inner"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                                <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                Tiempos (Segundos)
+                            </h4>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">INYECCIÓN</span><input v-model="perfilForm.tiempos.inyeccion" type="number" step="0.1" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">SOSTENIMIENTO</span><input v-model="perfilForm.tiempos.sostenimiento" type="number" step="0.1" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ENFRIAMIENTO</span><input v-model="perfilForm.tiempos.enfriamiento" type="number" step="0.1" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-pet-blue shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">CICLO MÁQUINA</span><input v-model="perfilForm.tiempos.ciclo_maquina" type="number" step="0.1" class="w-full h-11 bg-emerald-50/50 border-none rounded-xl text-center font-black text-emerald-600 shadow-inner"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                                <svg class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"></path></svg>
+                                Presiones (Bar / PSI)
+                            </h4>
+                            <div class="grid grid-cols-3 gap-3">
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">INYECCIÓN</span><input v-model="perfilForm.presiones.inyeccion" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">SOSTENIMIENTO</span><input v-model="perfilForm.presiones.sostenimiento" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
+                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">CONTRAPRESIÓN</span><input v-model="perfilForm.presiones.contrapresion" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Observaciones</h4>
+                            <textarea v-model="perfilForm.observaciones" rows="2" class="w-full bg-slate-50 border-none rounded-xl p-4 text-xs font-bold shadow-inner resize-none focus:ring-4 focus:ring-indigo-50" placeholder="Anotaciones sobre el ajuste..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="p-6 bg-slate-50 border-t flex gap-4">
+                        <button @click="modalPerfil = false" class="py-4 px-8 text-xs font-black uppercase text-slate-400 hover:text-slate-600 transition-colors">Cerrar</button>
+                        <button @click="guardarPerfilOperacion" class="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-xl shadow-indigo-600/30 hover:bg-indigo-700 transition-all hover:scale-[1.02]">
+                            Guardar Perfil en Bitácora
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <transition name="fade">
             <div v-if="modalPnc" class="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
                 <div class="bg-white w-full max-w-xl rounded-2xl md:rounded-[2rem] shadow-2xl overflow-hidden animate-in zoom-in-95">
                     <div class="p-5 md:p-6">
@@ -480,7 +589,7 @@ const clonarVale = (i) => { if (i < registros.value.length - 1) registros.value[
                         <div class="space-y-3 max-h-[55vh] overflow-y-auto pr-1 custom-scrollbar">
                             <div v-for="(item, idx) in registros[indexActivo].pnc" :key="idx" class="p-3 md:p-4 bg-slate-50 rounded-xl border border-slate-100">
                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                                    <div class="sm:col-span-2"><span class="text-[7px] font-black text-slate-400 uppercase">Defecto</span><select v-model="item.anomalia_id" class="w-full h-9 bg-white border-none rounded-lg text-[10px] font-bold shadow-sm"><option value="">Seleccionar...</option><option v-for="a in anomalias" :key="a.id" :value="a.id">{{ a.nombre }}</option></select></div>
+                                    <div class="sm:col-span-2"><span class="text-[7px] font-black text-slate-400 uppercase">Defecto</span><select v-model="item.anomalia_id" class="w-full h-9 bg-white border-none rounded-lg text-[10px] font-bold shadow-sm text-slate-700"><option value="" disabled>Seleccionar...</option><option v-for="a in pncCatalogo" :key="a.id" :value="a.id">{{ a.nombre }}</option></select></div>
                                     <div class="grid grid-cols-3 sm:col-span-2 gap-2">
                                         <div><span class="text-[7px] font-black text-slate-400 uppercase">MALAS (K)</span><input type="number" v-model="item.malas_kg" class="w-full h-9 bg-white border-none rounded-lg text-center font-black text-red-600 text-[10px] shadow-inner"></div>
                                         <div><span class="text-[7px] font-black text-slate-400 uppercase">CONT (K)</span><input type="number" v-model="item.cont_kg" class="w-full h-9 bg-white border-none rounded-lg text-center font-black text-amber-600 text-[10px] shadow-inner"></div>
@@ -509,7 +618,7 @@ const clonarVale = (i) => { if (i < registros.value.length - 1) registros.value[
                         <div class="space-y-3 max-h-[50vh] overflow-y-auto pr-1 custom-scrollbar">
                             <div v-for="(p, idx) in registros[indexActivo].paros" :key="idx" class="p-3 md:p-4 bg-slate-50 rounded-xl border border-slate-100">
                                 <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 mb-2">
-                                    <div class="sm:col-span-12"><span class="text-[7px] font-black text-slate-400 uppercase tracking-widest">FALLA</span><select v-model="p.falla_id" @change="actualizarCategoriaParo(p)" class="w-full h-9 bg-white border-none rounded-lg text-[10px] font-black shadow-sm"><option value="">Seleccionar falla...</option><option v-for="f in catalogoFallas" :key="f.codigo" :value="f.codigo">{{ f.codigo }} - {{ f.falla }}</option></select></div>
+                                    <div class="sm:col-span-12"><span class="text-[7px] font-black text-slate-400 uppercase tracking-widest">FALLA</span><select v-model="p.falla_id" @change="actualizarCategoriaParo(p)" class="w-full h-9 bg-white border-none rounded-lg text-[10px] font-black shadow-sm text-slate-700"><option value="" disabled>Seleccionar falla...</option><option v-for="f in paradasCatalogo" :key="f.id" :value="f.id">{{ f.codigo }} - {{ f.falla }}</option></select></div>
                                     <div class="grid grid-cols-3 sm:col-span-12 gap-2">
                                         <div><span class="text-[7px] font-black text-slate-400 uppercase">INICIO</span><input type="time" v-model="p.hora_inicio" class="w-full h-9 bg-white border-none rounded-lg text-center font-black text-[10px]"></div>
                                         <div><span class="text-[7px] font-black text-slate-400 uppercase">FIN</span><input type="time" v-model="p.hora_fin" class="w-full h-10 bg-white border-none rounded-lg text-center font-black text-[10px]"></div>
@@ -539,15 +648,17 @@ const clonarVale = (i) => { if (i < registros.value.length - 1) registros.value[
                             <button v-for="n in parseInt(registros[indexActivo].cav)" :key="n" @click="cavidadSeleccionada = n"
                                 :class="['h-12 rounded-xl text-[10px] font-black border-2 transition-all flex flex-col items-center justify-center', cavidadSeleccionada === n ? 'border-pet-blue bg-blue-50 text-pet-blue scale-110 z-10' : (registros[indexActivo].inspeccion.find(i => i.cav === n) ? 'border-red-500 bg-red-50 text-red-600' : 'border-emerald-500 bg-emerald-50 text-emerald-600')]">
                                 <span class="opacity-40 text-[7px]">CAV</span>{{ n }}
-                                <span v-if="registros[indexActivo].inspeccion.find(i => i.cav === n)" class="text-[8px] mt-0.5">Cod: {{ registros[indexActivo].inspeccion.find(i => i.cav === n).defecto }}</span>
+                                <span v-if="registros[indexActivo].inspeccion.find(i => i.cav === n)" class="text-[8px] mt-0.5">Def: {{ pncCatalogo.find(p => p.id === registros[indexActivo].inspeccion.find(i => i.cav === n).defecto)?.nombre.substring(0,5) || '...' }}</span>
                                 <span v-else class="text-[8px] mt-0.5 opacity-40">OK</span>
                             </button>
                         </div>
                         <div v-if="cavidadSeleccionada" class="bg-slate-900 p-6 rounded-[2rem] shadow-2xl sticky bottom-0">
                             <div class="flex justify-between items-center mb-4"><span class="text-white font-black text-[10px] uppercase">Defecto en Cavidad {{ cavidadSeleccionada }}</span><button @click="cavidadSeleccionada = null" class="text-white/50 text-[10px] font-bold uppercase underline">Cancelar</button></div>
-                            <div class="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-2">
-                                <button v-for="d in listaDefectosCalidad" :key="d.id" @click="asignarDefectoACavidad(d.id)" class="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg text-[9px] font-bold border border-white/5 transition-all text-center">{{ d.id }}<br><span class="text-[7px] opacity-60 leading-none">{{ d.nombre }}</span></button>
-                                <button @click="asignarDefectoACavidad(null)" class="col-span-4 mt-2 py-2.5 bg-red-600/30 text-red-300 rounded-xl text-[9px] font-black uppercase border border-red-500/20">Limpiar Defecto</button>
+                            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-2">
+                                <button v-for="d in pncCatalogo" :key="d.id" @click="asignarDefectoACavidad(d.id)" class="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg text-[9px] font-bold border border-white/5 transition-all text-center leading-tight">
+                                    {{ d.nombre }}
+                                </button>
+                                <button @click="asignarDefectoACavidad(null)" class="col-span-full mt-2 py-2.5 bg-red-600/30 text-red-300 rounded-xl text-[9px] font-black uppercase border border-red-500/20">Limpiar Defecto</button>
                             </div>
                         </div>
                     </div>
