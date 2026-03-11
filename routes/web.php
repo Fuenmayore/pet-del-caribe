@@ -4,8 +4,11 @@ use App\Http\Controllers\Settings\ConfiguracionController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Produccion\ProduccionController;
 use App\Http\Controllers\Settings\MaquinaController;
+use App\Http\Controllers\Settings\MateriaPrimaController;
+use App\Http\Controllers\Settings\ParadaSettingsController;
 use App\Http\Controllers\Settings\ProductoController;
 use App\Http\Controllers\Settings\UserController;
+use App\Http\Controllers\Settings\PncSettingsController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -43,6 +46,8 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/guardar-hora', [ProduccionController::class, 'guardarHora'])->name('guardarHora');
         Route::post('/finalizar/{turno}', [ProduccionController::class, 'finalizar'])->name('finalizar');
         Route::delete('/{turno}', [ProduccionController::class, 'destroy'])->name('destroy');
+        // Agrega esta línea:
+        Route::get('/analisis/{turno}', [ProduccionController::class, 'analisis'])->name('analisis');
     });
 
     // 3. GRUPO DE CONFIGURACIONES GLOBAL (Settings)
@@ -54,6 +59,9 @@ Route::middleware(['auth'])->group(function () {
         // CRUD de Máquinas y Productos
         Route::resource('maquinas', MaquinaController::class);
         Route::resource('productos', ProductoController::class);
+        Route::resource('pnc', PncSettingsController::class);
+        Route::resource('paradas', ParadaSettingsController::class);
+        Route::resource('materiaprima', MateriaPrimaController::class);
 
         /** * GESTIÓN UNIFICADA DE SEGURIDAD (UserController)
          * El recurso 'usuarios' crea: index, store, update, destroy.

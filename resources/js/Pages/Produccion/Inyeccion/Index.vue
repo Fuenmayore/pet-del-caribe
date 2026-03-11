@@ -143,9 +143,20 @@ const obtenerTotalesTurno = (turno) => {
                                     </span>
                                 </td>
                                 <td class="py-5 px-4 text-right">
-                                    <Link :href="route('produccion.registro', h.id)" class="inline-flex h-9 w-9 items-center justify-center bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-pet-blue hover:border-pet-blue shadow-sm transition-all">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                                    </Link>
+                                    <div class="flex justify-end gap-2">
+                                        <Link :href="route('produccion.analisis', h.id)" 
+                                            class="inline-flex h-9 w-9 items-center justify-center bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-amber-500 hover:border-amber-500 shadow-sm transition-all"
+                                            title="Análisis de Eficiencia">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                            </svg>
+                                        </Link>
+                                        <Link :href="route('produccion.registro', h.id)" 
+                                            class="inline-flex h-9 w-9 items-center justify-center bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-pet-blue hover:border-pet-blue shadow-sm transition-all"
+                                            title="Ver Detalles">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                        </Link>
+                                    </div>
                                 </td>
                             </tr>
                         </tbody>
@@ -179,12 +190,18 @@ const obtenerTotalesTurno = (turno) => {
                             </div>
                         </div>
 
-                        <div class="flex items-center justify-between">
+                        <div class="flex items-center justify-between gap-2">
                             <div class="flex -space-x-2 overflow-hidden">
                                 <span v-for="idx in Math.min(h.configuraciones.length, 3)" :key="idx" class="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-slate-200 flex items-center justify-center text-[7px] font-black text-slate-500 uppercase">F{{ idx }}</span>
                                 <span v-if="h.configuraciones.length > 3" class="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-slate-100 flex items-center justify-center text-[7px] font-black text-slate-400">+{{ h.configuraciones.length - 3 }}</span>
                             </div>
-                            <Link :href="route('produccion.registro', h.id)" class="px-6 py-2 bg-pet-blue text-white rounded-xl text-[9px] font-black uppercase shadow-md active:scale-95 transition-all">Ver Detalles</Link>
+                            <div class="flex gap-2">
+                                <Link :href="route('produccion.analisis', h.id)" 
+                                    class="p-2.5 bg-amber-100 text-amber-600 rounded-xl shadow-sm active:scale-95 transition-all">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                                </Link>
+                                <Link :href="route('produccion.registro', h.id)" class="px-6 py-2 bg-pet-blue text-white rounded-xl text-[9px] font-black uppercase shadow-md active:scale-95 transition-all">Ver Detalles</Link>
+                            </div>
                         </div>
                     </div>
                 </div>

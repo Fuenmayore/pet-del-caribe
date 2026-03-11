@@ -29,7 +29,7 @@ const menus = [
         title: 'Defectos PNC', 
         desc: 'Catálogo de anomalías de calidad', 
         icon: '⚠️', 
-        route: 'settings.anomalias.index', 
+        route: 'settings.pnc.index', 
         count: null,
         color: 'text-red-500',
         bgColor: 'bg-red-50'
@@ -38,7 +38,7 @@ const menus = [
         title: 'Tipos de Paro', 
         desc: 'Codificación de tiempos perdidos', 
         icon: '🛑', 
-        route: 'settings.fallas.index', 
+        route: 'settings.paradas.index', 
         count: null,
         color: 'text-orange-500',
         bgColor: 'bg-orange-50'
@@ -51,6 +51,15 @@ const menus = [
         count: props.stats?.totalUsuarios,
         color: 'text-purple-500',
         bgColor: 'bg-purple-50'
+    },
+    { 
+        title: 'Materia Prima', 
+        desc: 'Catálogo de materiales de entrada', 
+        icon: '�', 
+        route: 'settings.materiaprima.index', 
+        count: props.stats?.totalMateriaPrima,
+        color: 'text-green-500',
+        bgColor: 'bg-green-50'
     },
 ];
 </script>

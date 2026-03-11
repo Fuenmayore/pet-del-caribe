@@ -47,14 +47,37 @@ return new class extends Migration {
             $table->timestamps();
         });
 
-        Schema::create('materias_primas', function (Blueprint $table) {
-            $table->id();
-            $table->string('codigo')->unique(); // Ej: RES-PET-01
-            $table->string('nombre');          // Ej: Resina PET Virgen
-            $table->string('tipo');            // Ej: Virgen, Molido, Masterbatch
-            $table->softDeletes();
+        // database/migrations/xxxx_xx_xx_create_pnc_catalogo_table.php
+        Schema::create('pnc_catalogo', function (Blueprint $table) {
+            $table->uuid('id')->primary();
+            $table->string('nombre');
+            $table->enum('area', ['Inyección', 'Soplado', 'Ambos']);
             $table->timestamps();
+            $table->softDeletes(); // 
         });
+
+        // database/migrations/xxxx_xx_xx_create_paradas_catalogo_table.php
+        Schema::create('paradas_catalogo', function (Blueprint $table) {
+            $table->uuid('id')->primary(); // Estándar Fase I [cite: 22]
+            $table->string('codigo')->unique(); 
+            $table->string('falla');
+            $table->string('categoria')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+
+        Schema::create('materia_prima', function (Blueprint $table) {
+            $table->uuid('id')->primary(); // Estándar UUID definido en Fase I
+            $table->string('nombre')->unique();
+            $table->enum('tipo', ['Resina', 'Preforma', 'Pigmento', 'Aditivo', 'Otro']);
+            $table->string('unidad_medida')->default('KG');
+            $table->string('proveedor')->nullable();
+            $table->timestamps();
+            $table->softDeletes(); // Integridad de datos industriales
+        });
+
+
     }
 
     public function down(): void {

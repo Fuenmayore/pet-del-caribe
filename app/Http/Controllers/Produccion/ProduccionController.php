@@ -8,49 +8,43 @@ use App\Models\Producto;
 use App\Models\Maquina;
 use App\Models\ProduccionHoraria;
 use App\Models\AnomaliaProduccion;
+// --- NUEVOS MODELOS PARA CATÁLOGOS DINÁMICOS ---
+use App\Models\MateriaPrima;
+use App\Models\PncCatalogo;
+use App\Models\ParadaCatalogo;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 
 class ProduccionController extends Controller
 {
-    /**
-     * Dashboard Principal.
-     * Orden: 1. Activos, 2. Libres, 3. Historial (Paginado)
-     */
     public function index(Request $request)
-{
-    return Inertia::render('Produccion/Inyeccion/Index', [
-        // 1. MÁQUINAS LIBRES (Para iniciar turno)
-        // Solo máquinas de inyección que no tengan turnos abiertos
-        'maquinasLibres' => Maquina::where('sub_area', 'Inyeccion')
-            ->whereDoesntHave('turnos', function ($query) {
-                $query->where('estado', 'Abierto');
-            })->get(),
+    {
+        return Inertia::render('Produccion/Inyeccion/Index', [
+            'maquinasLibres' => Maquina::where('sub_area', 'Inyeccion')
+                ->whereDoesntHave('turnos', function ($query) {
+                    $query->where('estado', 'Abierto');
+                })->get(),
 
-        // 2. TURNOS ACTIVOS DEL USUARIO
-        // Cargamos la config activa y todas las configuraciones para detectar cambios de referencia
-        'misTurnosActivos' => Turno::with(['maquina', 'configActiva.producto', 'configuraciones'])
-            ->where('operario_id', auth()->id())
-            ->where('estado', 'Abierto')
-            ->get(),
+            'misTurnosActivos' => Turno::with(['maquina', 'configActiva.producto', 'configuraciones'])
+                ->where('operario_id', auth()->id())
+                ->where('estado', 'Abierto')
+                ->get(),
 
-        // 3. HISTORIAL GENERAL (Paginado para eficiencia)
-        // Agregamos 'operario' para mostrar quién trabajó cada turno
-        'historialTurnos' => Turno::with([
-                'maquina', 
-                'operario', // <--- Agregamos la relación del usuario/operario
-                'configuraciones.producto', 
-                'configuraciones.horasProduccion'
-            ])
-            ->orderBy('fecha', 'desc')
-            ->orderBy('numero_turno', 'desc')
-            ->paginate(15) // Aumentamos a 15 para una mejor vista en tablas
-            ->withQueryString(),
-    ]);
-}
+            'historialTurnos' => Turno::with([
+                    'maquina', 
+                    'operario', 
+                    'configuraciones.producto', 
+                    'configuraciones.horasProduccion'
+                ])
+                ->orderBy('fecha', 'desc')
+                ->orderBy('numero_turno', 'desc')
+                ->paginate(15)
+                ->withQueryString(),
+        ]);
+    }
 
-public function config(Maquina $maquina)
+    public function config(Maquina $maquina)
     {
         return Inertia::render('Produccion/Inyeccion/Config', ['maquina' => $maquina]);
     }
@@ -81,6 +75,9 @@ public function config(Maquina $maquina)
         return redirect()->route('produccion.registro', $turno->id);
     }
 
+    /**
+     * MÉTODO REGISTRO: Inyectamos los catálogos dinámicos aquí.
+     */
     public function registro(Turno $turno)
     {
         $turno->load([
@@ -96,21 +93,32 @@ public function config(Maquina $maquina)
             'productos' => Producto::where('area', 'LIKE', '%INYECCIÓN%')
                 ->orderBy('descripcion')
                 ->get(['id', 'item', 'descripcion', 'ciclo', 'cavidades']),
-            'anomalias' => AnomaliaProduccion::all(),
+            
+            // --- INYECCIÓN DE DATOS QUIRÚRGICA ---
+            'materiales' => MateriaPrima::orderBy('nombre')->get(), // Catálogo Materia Prima
+            
+            'pncCatalogo' => PncCatalogo::whereIn('area', ['Inyección', 'Ambos'])
+                ->orderBy('nombre')
+                ->get(), // Catálogo de Defectos real
+            
+            'paradasCatalogo' => ParadaCatalogo::orderBy('codigo')->get(), // Catálogo de Fallas real
+            
+            'anomalias' => AnomaliaProduccion::all(), // Mantener por compatibilidad legacy
         ]);
     }
 
-        public function guardarConfiguracion(Request $request, Turno $turno)
+    public function guardarConfiguracion(Request $request, Turno $turno)
     {
         $request->validate([
             'producto_id' => 'required|exists:productos,id',
             'color'       => 'nullable|string|max:50',
             'mezcla'      => 'required|array',
+            // Opcional: Validar que cada materia_prima_id exista en la tabla
+            'mezcla.*.materia_prima_id' => 'required|exists:materia_prima,id'
         ]);
 
         $turno->configuraciones()->create([
             'producto_id'         => $request->producto_id,
-            // Guardamos el color y los materiales juntos en el JSON
             'mezcla_materiales'   => [
                 'color'      => strtoupper($request->color),
                 'materiales' => $request->mezcla
@@ -124,19 +132,16 @@ public function config(Maquina $maquina)
         return back()->with('success', 'Referencia Iniciada');
     }
 
-        public function guardarHora(Request $request)
+    public function guardarHora(Request $request)
     {
-        // Validamos los datos recibidos del frontend
         $validated = $request->validate([
             'config_id'       => 'required|exists:produccion_config,id',
             'hora'            => 'required',
             'unidades_buenas' => 'required|integer|min:0',
             'num_vale'        => 'nullable|string',
-            // 'pnc' ahora incluye: cavidades_reales, ciclo_real, defectos, paros e inspeccion
             'pnc'             => 'nullable|array' 
         ]);
 
-        // Guardamos o actualizamos el registro de la hora específica
         ProduccionHoraria::updateOrCreate(
             [
                 'config_id' => $validated['config_id'], 
@@ -145,27 +150,33 @@ public function config(Maquina $maquina)
             [
                 'unidades_buenas'     => $validated['unidades_buenas'], 
                 'num_vale_inyectora'  => $validated['num_vale'], 
-                // Se guarda el objeto completo (incluyendo la inspección de preformas) en la columna JSON
                 'pnc_detalle'         => $validated['pnc'] ?? []
             ]
         );
 
-        return back()->with('message', 'Hora e Inspección de Preformas sincronizadas');
+        return back()->with('message', 'Hora e Inspección sincronizadas');
     }
 
-    /**
-     * FINALIZAR TURNO.
-     * Cambia el estado para que pase al historial y libere la máquina.
-     */
     public function finalizar(Turno $turno)
     {
         $turno->update(['estado' => 'Cerrado']);
         return redirect()->route('produccion.index')->with('message', 'Turno finalizado con éxito');
     }
 
-    /**
-     * ELIMINAR REGISTRO (Soft Delete).
-     */
+    public function analisis(Turno $turno)
+    {
+        $turno->load([
+            'maquina', 
+            'operario', 
+            'configuraciones.producto', 
+            'configuraciones.horasProduccion'
+        ]);
+
+        return inertia('Produccion/Inyeccion/Analisis', [
+            'turno' => $turno
+        ]);
+    }
+
     public function destroy(Turno $turno)
     {
         DB::transaction(function () use ($turno) {
