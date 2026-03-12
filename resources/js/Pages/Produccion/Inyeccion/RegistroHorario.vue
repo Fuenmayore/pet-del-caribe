@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { useForm, router, Head } from '@inertiajs/vue3';
+import { useForm, router, Head, Link } from '@inertiajs/vue3';
 
 const props = defineProps({ 
     turno: Object, 
@@ -9,7 +9,8 @@ const props = defineProps({
     anomalias: Array,
     materiales: Array,
     pncCatalogo: Array,
-    paradasCatalogo: Array
+    paradasCatalogo: Array,
+    perfilesGuardados: Array 
 });
 
 const finalizarTurno = () => {
@@ -18,48 +19,61 @@ const finalizarTurno = () => {
     }
 };
 
+// --- KPIs AUDITADOS (UNIFICADOS CON VISTA ANÁLISIS) ---
 const kpisCalculados = computed(() => {
     let totalBuenas = 0;
-    let totalMalasKg = 0;
-    let totalContKg = 0;
-    let totalTortaKg = 0;
+    let totalScrapKg = 0;
     let totalMinutosParo = 0;
     let metaTotalAcumulada = 0;
 
     registros.value.forEach(reg => {
-        totalBuenas += (parseFloat(reg.buenas) || 0);
-        if (reg.pnc && reg.pnc.length > 0) {
-            reg.pnc.forEach(p => {
-                totalMalasKg += (parseFloat(p.malas_kg) || 0);
-                totalContKg  += (parseFloat(p.cont_kg) || 0);
-                totalTortaKg += (parseFloat(p.torta_kg) || 0);
-            });
-        }
-        if (reg.paros && reg.paros.length > 0) {
-            reg.paros.forEach(p => {
-                totalMinutosParo += (parseInt(p.minutos) || 0);
-            });
-        }
-        const config = props.turno.configuraciones?.find(c => c.id === reg.config_id) || props.turno.config_activa;
-        if (config && (reg.buenas > 0 || reg.guardado)) {
-            const cicloEstandar = parseFloat(config.parametros_estandar?.ciclo || config.producto?.ciclo || 0);
-            const cavReales = parseFloat(reg.cav || config.parametros_estandar?.cavidades || config.producto?.cavidades || 0);
-            if (cicloEstandar > 0) {
-                const metaHora = (3600 / cicloEstandar) * cavReales;
-                metaTotalAcumulada += metaHora;
+        // Solo procesamos horas que tengan algún dato o ya estén guardadas en DB
+        if (reg.guardado || reg.buenas > 0 || reg.pnc.length > 0 || reg.paros.length > 0) {
+            
+            totalBuenas += (parseInt(reg.buenas) || 0);
+
+            // Sumar Scrap en Kilogramos
+            if (reg.pnc && reg.pnc.length > 0) {
+                reg.pnc.forEach(p => {
+                    totalScrapKg += (parseFloat(p.malas_kg) || 0) + 
+                                    (parseFloat(p.cont_kg) || 0) + 
+                                    (parseFloat(p.torta_kg) || 0);
+                });
+            }
+
+            // Sumar Minutos de Paro
+            if (reg.paros && reg.paros.length > 0) {
+                reg.paros.forEach(p => {
+                    totalMinutosParo += (parseInt(p.minutos) || 0);
+                });
+            }
+
+            // --- LÓGICA DE META ESTRICTA (IGUAL A ANÁLISIS) ---
+            const config = props.turno.configuraciones?.find(c => c.id === reg.config_id) || props.turno.config_activa;
+            
+            if (config && config.producto) {
+                const cicloStd = parseFloat(config.producto.ciclo || 0);
+                const cavStd = parseInt(config.producto.cavidades || 0); // USA ESTÁNDAR, NO reg.cav
+
+                if (cicloStd > 0) {
+                    const metaHora = (3600 / cicloStd) * cavStd;
+                    metaTotalAcumulada += metaHora;
+                }
             }
         }
     });
 
-    const sumaDesperdicio = totalMalasKg + totalContKg + totalTortaKg;
-    const divisorPNC = totalBuenas + sumaDesperdicio;
-    const porcentajePNC = divisorPNC > 0 ? ((sumaDesperdicio * 100) / divisorPNC).toFixed(2) : "0.00";
     const eficienciaReal = metaTotalAcumulada > 0 ? ((totalBuenas * 100) / metaTotalAcumulada).toFixed(1) : "0.0";
-    const hrs = Math.floor(totalMinutosParo / 60);
-    const mins = totalMinutosParo % 60;
-    const tiempoParoFormateado = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    const hrsParo = Math.floor(totalMinutosParo / 60);
+    const minsParo = totalMinutosParo % 60;
+    const tiempoParoFormateado = hrsParo > 0 ? `${hrsParo}h ${minsParo}m` : `${minsParo} min`;
 
-    return { eficiencia: eficienciaReal, paradas: tiempoParoFormateado, pnc: porcentajePNC };
+    return { 
+        eficiencia: eficienciaReal, 
+        paradas: tiempoParoFormateado, 
+        scrap: totalScrapKg.toFixed(2),
+        totalBuenas: totalBuenas.toLocaleString()
+    };
 });
 
 const modalPnc = ref(false);
@@ -69,31 +83,12 @@ const indexActivo = ref(null);
 const catalogoFallas = computed(() => props.paradasCatalogo);
 const listaDefectosCalidad = computed(() => props.pncCatalogo);
 
-const modalInspeccion = ref(false);
-const cavidadSeleccionada = ref(null);
-
-// --- NUEVO: ESTADO Y FORMULARIO PARA PERFIL DE OPERACIÓN ---
-const modalPerfil = ref(false);
-const perfilForm = useForm({
-    temperaturas: { zona1: '', zona2: '', zona3: '', zona4: '', boquilla: '', molde: '' },
-    tiempos: { inyeccion: '', sostenimiento: '', enfriamiento: '', ciclo_maquina: '' },
-    presiones: { inyeccion: '', sostenimiento: '', contrapresion: '' },
-    observaciones: ''
+const perfilesGuardadosCount = computed(() => {
+    return props.perfilesGuardados ? props.perfilesGuardados.length : 0;
 });
 
-const guardarPerfilOperacion = () => {
-    // Almacena el perfil ligado a la configuración activa
-    // NOTA: Deberás crear esta ruta en tu web.php y controlador en el próximo paso
-    /*
-    perfilForm.post(route('produccion.guardarPerfil', props.turno.config_activa.id), {
-        preserveScroll: true,
-        onSuccess: () => { modalPerfil.value = false; }
-    });
-    */
-    alert("Función lista para conectar al Backend. Los datos se recolectaron correctamente.");
-    modalPerfil.value = false;
-};
-// -----------------------------------------------------------
+const modalInspeccion = ref(false);
+const cavidadSeleccionada = ref(null);
 
 const calcularDiferenciaMinutos = (inicio, fin) => {
     if (!inicio || !fin) return 0;
@@ -134,6 +129,7 @@ const generarHorasPorTurno = (numeroTurno, duracion = 8) => {
         horaInicio = (numeroTurno == 1) ? 7 : (numeroTurno == 2 ? 15 : 23);
     }
     return Array.from({ length: duracion }, (_, i) => ({
+        id: null, // SOPORTE UUID
         hora: `${String((horaInicio + i) % 24).padStart(2, '0')}:00`,
         num_vale: '', ciclo: '', buenas: '', cav: '', 
         pnc: [], paros: [], 
@@ -164,6 +160,7 @@ const cargarDatosExistentes = () => {
                 horas.forEach(dbHora => {
                     const fila = registros.value.find(r => dbHora.hora.startsWith(r.hora));
                     if (fila && !fila.modificado) {
+                        fila.id = dbHora.id; // GUARDAMOS EL UUID
                         fila.num_vale = dbHora.num_vale_inyectora;
                         fila.buenas = dbHora.unidades_buenas;
                         if(dbHora.pnc_detalle?.ciclo_real) fila.ciclo = dbHora.pnc_detalle.ciclo_real;
@@ -189,10 +186,10 @@ onMounted(() => {
         registros.value[0].num_vale = generarLoteSugerido();
     }
     pollInterval = setInterval(() => {
-        const estaOcupado = registros.value.some(r => r.procesando) || editandoConfig.value || modalPnc.value || modalParo.value || modalInspeccion.value || modalPerfil.value;
+        const estaOcupado = registros.value.some(r => r.procesando) || editandoConfig.value || modalPnc.value || modalParo.value || modalInspeccion.value;
         if (!estaOcupado) {
             router.reload({ 
-                only: ['turno'], 
+                only: ['turno', 'perfilesGuardados'], 
                 preserveScroll: true, 
                 preserveState: true,
                 onSuccess: () => cargarDatosExistentes() 
@@ -203,13 +200,35 @@ onMounted(() => {
 
 onUnmounted(() => { if (pollInterval) clearInterval(pollInterval); });
 
+// --- LÓGICA PARA EDITAR FASE ---
 const editandoConfig = ref(!props.turno.config_activa);
+const isEditingExisting = ref(false);
+
 const configForm = useForm({
+    config_id: null,
     producto_id: null,
     referencia_nombre: '',
     color: props.turno.config_activa?.mezcla_materiales?.color || '',
     mezcla: props.turno.config_activa?.mezcla_materiales?.materiales || [{ materia_prima_id: '', porcentaje: '' }],
 });
+
+const prepararEdicionFase = (fase) => {
+    isEditingExisting.value = true;
+    configForm.config_id = fase.id;
+    configForm.producto_id = fase.producto_id;
+    configForm.referencia_nombre = fase.producto?.descripcion;
+    configForm.color = fase.mezcla_materiales?.color || '';
+    configForm.mezcla = fase.mezcla_materiales?.materiales || [{ materia_prima_id: '', porcentaje: '' }];
+    editandoConfig.value = true;
+};
+
+const prepararNuevoMolde = () => {
+    isEditingExisting.value = false;
+    configForm.reset();
+    configForm.config_id = null;
+    configForm.mezcla = [{ materia_prima_id: '', porcentaje: '' }];
+    editandoConfig.value = true;
+};
 
 const agregarFilaMaterial = () => configForm.mezcla.push({ materia_prima_id: '', porcentaje: '' });
 const quitarFilaMaterial = (index) => configForm.mezcla.length > 1 && configForm.mezcla.splice(index, 1);
@@ -217,7 +236,10 @@ const quitarFilaMaterial = (index) => configForm.mezcla.length > 1 && configForm
 const guardarConfig = () => {
     if (totalMezcla.value !== 100) return alert("La mezcla debe sumar exactamente 100%");
     configForm.post(route('produccion.configurar', props.turno.id), {
-        onSuccess: () => { editandoConfig.value = false; }
+        onSuccess: () => { 
+            editandoConfig.value = false; 
+            cargarDatosExistentes();
+        }
     });
 };
 
@@ -277,6 +299,7 @@ const actualizarCategoriaParo = (p) => {
     if (seleccion) p.categoria = seleccion.categoria;
 };
 
+// --- LÓGICA SYNC BLINDADA ---
 const syncHora = (index) => {
     const fila = registros.value[index];
     if (!fila.inspeccion_completada) {
@@ -284,10 +307,14 @@ const syncHora = (index) => {
         abrirInspeccion(index);
         return;
     }
-    if (!props.turno.config_activa) return alert("Guarde la configuración primero");
+    
+    const configIdDestino = fila.config_id || props.turno.config_activa?.id;
+    if (!configIdDestino) return alert("Guarde la configuración primero");
+
     fila.procesando = true;
     router.post(route('produccion.guardarHora'), {
-        config_id: props.turno.config_activa.id,
+        id: fila.id, // Se manda el UUID
+        config_id: configIdDestino, // Se envía la fase original
         hora: fila.hora,
         num_vale: fila.num_vale,
         unidades_buenas: fila.buenas,
@@ -301,7 +328,13 @@ const syncHora = (index) => {
             fila.procesando = false; 
             fila.guardado = true;
             fila.modificado = false; 
-            fila.referencia_nombre = props.turno.config_activa.producto?.descripcion;
+            fila.config_id = configIdDestino; // Confirmar anclaje de fase local
+            
+            // Refrescar nombre local en caso de que sea nuevo
+            const faseAplicada = props.turno.configuraciones?.find(c => c.id === configIdDestino) || props.turno.config_activa;
+            if (faseAplicada) fila.referencia_nombre = faseAplicada.producto?.descripcion;
+            
+            cargarDatosExistentes(); 
         },
         onError: () => fila.procesando = false
     });
@@ -335,43 +368,73 @@ const clonarVale = (i) => {
         <template #header>
             <div class="flex items-center justify-between w-full">
                 <div class="flex items-center gap-3">
-                    <div class="p-2 bg-pet-blue text-white rounded-lg shadow-lg">
+                    <div class="p-2 bg-slate-900 text-white rounded-lg shadow-lg">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                     </div>
                     <div>
                         <h2 class="text-sm font-black text-slate-800 uppercase leading-none">Monitor Inyección</h2>
-                        <p class="text-[9px] font-bold text-pet-blue uppercase mt-0.5">{{ turno.maquina.nombre }}</p>
+                        <p class="text-[9px] font-bold text-indigo-600 uppercase mt-0.5">{{ turno.maquina.nombre }}</p>
                     </div>
                 </div>
 
                 <div class="bg-slate-900 text-white px-4 py-1.5 rounded-lg border border-slate-800 flex items-center gap-2 shadow-sm">
-                    <span class="w-1.5 h-1.5 rounded-full bg-pet-green animate-pulse"></span>
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                     <span class="text-[9px] font-black uppercase tracking-widest">TURNO #{{ turno.numero_turno }} ({{ turno.duracion_turno }}H)</span>
                 </div>
             </div>
         </template>
 
         <div class="max-w-7xl mx-auto p-3 md:p-6 space-y-6 pb-40">
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-                <div class="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-pet-blue transition-all">
-                    <div><p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Eficiencia Real</p><p class="text-2xl md:text-3xl font-black font-mono text-emerald-500">{{ kpisCalculados.eficiencia }}%</p></div>
-                    <div class="h-10 w-10 md:h-12 md:w-12 rounded-xl bg-emerald-50 text-emerald-500 flex items-center justify-center"><svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg></div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                
+                <div class="bg-slate-900 p-4 md:p-5 rounded-2xl shadow-xl border border-slate-800 flex items-center justify-between group">
+                    <div>
+                        <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">OEE Desempeño (Auditado)</p>
+                        <p class="text-2xl md:text-3xl font-black font-mono text-white">{{ kpisCalculados.eficiencia }}%</p>
+                    </div>
+                    <div class="h-10 w-10 md:h-12 md:w-12 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+                    </div>
                 </div>
+
+                <div class="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-emerald-500 transition-all">
+                    <div>
+                        <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Unidades Buenas</p>
+                        <p class="text-2xl md:text-3xl font-black font-mono text-emerald-500">{{ kpisCalculados.totalBuenas }}</p>
+                    </div>
+                    <div class="h-10 w-10 md:h-12 md:w-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                    </div>
+                </div>
+
                 <div class="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-orange-400 transition-all">
-                    <div><p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Tiempo de Paro</p><p class="text-2xl md:text-3xl font-black font-mono text-orange-500">{{ kpisCalculados.paradas }}h</p></div>
-                    <div class="h-10 w-10 md:h-12 md:w-12 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center"><svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div>
+                    <div>
+                        <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Tiempo de Paro</p>
+                        <p class="text-2xl md:text-3xl font-black font-mono text-orange-500">{{ kpisCalculados.paradas }}</p>
+                    </div>
+                    <div class="h-10 w-10 md:h-12 md:w-12 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
                 </div>
+
                 <div class="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-red-400 transition-all">
-                    <div><p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">% PNC</p><p class="text-2xl md:text-3xl font-black font-mono text-red-500">{{ kpisCalculados.pnc }}%</p></div>
-                    <div class="h-10 w-10 md:h-12 md:w-12 rounded-xl bg-red-50 text-red-500 flex items-center justify-center"><svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg></div>
+                    <div>
+                        <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Desperdicio (Kg)</p>
+                        <p class="text-2xl md:text-3xl font-black font-mono text-red-500">{{ kpisCalculados.scrap }}<span class="text-xs ml-1 font-sans font-bold">kg</span></p>
+                    </div>
+                    <div class="h-10 w-10 md:h-12 md:w-12 rounded-xl bg-red-50 text-red-500 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    </div>
                 </div>
+
             </div>
 
             <div class="space-y-3">
                 <div class="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
                     <button v-for="(fase, idx) in props.turno.configuraciones" :key="fase.id" 
                         @click="seleccionarFase(fase)"
-                        :class="['px-4 py-2 rounded-xl text-[10px] font-black uppercase border transition-all whitespace-nowrap', faseAMostrar?.id === fase.id ? 'bg-pet-blue text-white border-pet-blue shadow-md' : 'bg-white text-slate-400 border-slate-100']">
+                        :class="['px-4 py-2 rounded-xl text-[10px] font-black uppercase border transition-all whitespace-nowrap', faseAMostrar?.id === fase.id ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-slate-400 border-slate-100']">
                         Fase {{ idx + 1 }}
                     </button>
                 </div>
@@ -379,28 +442,41 @@ const clonarVale = (i) => {
                 <div v-if="faseAMostrar && !editandoConfig" 
                     :class="['rounded-2xl px-4 md:px-6 py-4 flex flex-col md:flex-row items-center justify-between border transition-all duration-500 shadow-sm gap-4', esFaseActiva ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-500']">
                     <div class="flex items-center gap-3 md:gap-5 truncate w-full md:w-auto">
-                        <div :class="['p-2 rounded-xl shrink-0', esFaseActiva ? 'bg-white/5 text-pet-green' : 'bg-white text-slate-300']"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg></div>
+                        <div :class="['p-2 rounded-xl shrink-0', esFaseActiva ? 'bg-white/5 text-emerald-400' : 'bg-white text-slate-300']"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg></div>
                         <div class="truncate">
                             <span class="text-[7px] md:text-[8px] font-black uppercase opacity-50 block mb-1">Referencia Actual</span>
                             <h4 class="text-[11px] md:text-sm font-black uppercase truncate">{{ faseAMostrar.producto?.descripcion }}</h4>
-                            <p v-if="faseAMostrar.mezcla_materiales?.color" class="text-[9px] font-black text-pet-blue uppercase">Color: {{ faseAMostrar.mezcla_materiales.color }}</p>
+                            <p v-if="faseAMostrar.mezcla_materiales?.color" class="text-[9px] font-black text-indigo-400 uppercase">Color: {{ faseAMostrar.mezcla_materiales.color }}</p>
                         </div>
                     </div>
                     
                     <div class="flex flex-wrap items-center gap-2 md:gap-3 w-full md:w-auto justify-end">
-                        <button v-if="esFaseActiva" @click="modalPerfil = true" class="px-5 py-2.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white shadow-sm flex items-center gap-2 transition-all">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        
+                        <button @click="prepararEdicionFase(faseAMostrar)" 
+                            :class="['text-[9px] font-bold underline underline-offset-2 transition-colors mr-2', esFaseActiva ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-900']">
+                            Corregir Ref.
+                        </button>
+
+                        <Link v-if="esFaseActiva" :href="route('produccion.crearPerfil', props.turno.id)" 
+                            class="px-5 py-2.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white shadow-sm flex items-center gap-2 transition-all relative">
+                            <span v-if="perfilesGuardadosCount > 0" 
+                                  :class="['absolute -top-2 -right-2 flex h-5 w-5 rounded-full items-center justify-center text-[10px] text-white border-2 border-white shadow-sm', 
+                                           perfilesGuardadosCount >= 3 ? 'bg-emerald-500' : 'bg-red-500']">
+                                {{ perfilesGuardadosCount }}
+                            </span>
                             Perfil Operación
+                        </Link>
+
+                        <button v-if="esFaseActiva" @click="prepararNuevoMolde" class="px-5 py-2.5 bg-white text-slate-900 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-emerald-400 shadow-sm flex items-center gap-2 transition-colors">
+                            ⚙️ Cambiar Molde
                         </button>
 
                         <button v-if="esFaseActiva" @click="finalizarTurno" 
-                            class="px-4 py-2.5 bg-transparent border-2 border-red-600/30 text-red-500 rounded-xl text-[9px] font-black uppercase hover:bg-red-600 hover:text-white transition-all">
+                            class="px-6 py-2.5 bg-red-600 text-white rounded-xl text-[9px] font-black uppercase shadow-lg shadow-red-500/30 hover:bg-red-700 hover:-translate-y-0.5 transition-all">
                             Finalizar Turno
                         </button>
-                        <button v-if="esFaseActiva" @click="editandoConfig = true" class="px-5 py-2.5 bg-white text-slate-900 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-pet-green shadow-sm flex items-center gap-2">
-                            ⚙️ Cambiar Molde
-                        </button>
-                        <button v-else @click="faseSeleccionadaManual = null" class="px-5 py-2.5 bg-pet-blue text-white rounded-xl text-[9px] font-black uppercase shadow-sm">Ver Actual</button>
+
+                        <button v-else @click="faseSeleccionadaManual = null" class="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase shadow-sm">Ver Actual</button>
                     </div>
                 </div>
             </div>
@@ -408,40 +484,47 @@ const clonarVale = (i) => {
             <transition name="expand">
                 <div v-if="editandoConfig" class="bg-white rounded-[2rem] shadow-2xl border border-slate-100 overflow-hidden mb-6 relative">
                     <div class="flex justify-between items-center p-6 border-b border-slate-50">
-                         <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Configuración de Producción</h3>
+                         <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                             {{ isEditingExisting ? 'Corregir Referencia de Fase' : 'Configuración de Producción' }}
+                         </h3>
                          <button @click="editandoConfig = false" class="h-10 w-10 bg-slate-100 rounded-full flex items-center justify-center hover:bg-slate-200 text-slate-500 font-bold">✕</button>
                     </div>
                     <div class="grid grid-cols-1 lg:grid-cols-12">
                         <div class="lg:col-span-6 p-6 md:p-8 border-b lg:border-b-0 lg:border-r border-slate-50">
                             <h3 class="text-[10px] font-black text-slate-800 uppercase mb-4 tracking-widest">1. Identificar Producto</h3>
                             <div v-if="!configForm.producto_id" class="relative">
-                                <input type="text" v-model="searchProd" class="w-full h-14 bg-slate-50 border-none rounded-xl font-black px-6 focus:ring-4 focus:ring-pet-blue/5 text-sm shadow-inner" placeholder="Buscar producto...">
+                                <input type="text" v-model="searchProd" class="w-full h-14 bg-slate-50 border-none rounded-xl font-black px-6 focus:ring-4 focus:ring-indigo-500/5 text-sm shadow-inner" placeholder="Buscar producto...">
                                 <div v-if="productosFiltrados.length" class="absolute z-50 w-full bg-white shadow-2xl rounded-xl mt-2 border overflow-hidden">
-                                    <div v-for="p in productosFiltrados" :key="p.id" @click="seleccionarProducto(p)" class="p-4 hover:bg-slate-50 cursor-pointer flex justify-between items-center group"><div class="font-black text-slate-800 text-xs uppercase">{{ p.descripcion }}</div><span class="text-[9px] font-black text-pet-blue">ELEGIR →</span></div>
+                                    <div v-for="p in productosFiltrados" :key="p.id" @click="seleccionarProducto(p)" class="p-4 hover:bg-slate-50 cursor-pointer flex justify-between items-center group"><div class="font-black text-slate-800 text-xs uppercase">{{ p.descripcion }}</div><span class="text-[9px] font-black text-indigo-600">ELEGIR →</span></div>
                                 </div>
                             </div>
-                            <div v-else class="p-6 rounded-2xl bg-pet-blue text-white flex justify-between items-center shadow-lg">
+                            <div v-else class="p-6 rounded-2xl bg-indigo-600 text-white flex justify-between items-center shadow-lg">
                                 <div class="truncate mr-2"><span class="text-[8px] font-black uppercase opacity-60 block mb-1">Elegido</span><h4 class="text-sm font-black uppercase truncate">{{ configForm.referencia_nombre }}</h4></div>
                                 <button @click="configForm.producto_id = null" class="h-8 w-8 bg-white/10 rounded-lg hover:bg-white/20 shrink-0">✕</button>
                             </div>
 
                             <div class="mt-6">
                                 <h3 class="text-[10px] font-black text-slate-800 uppercase mb-3 tracking-widest">2. Especificar Color</h3>
-                                <input v-model="configForm.color" type="text" class="w-full h-12 bg-slate-50 border-none rounded-xl font-black px-6 focus:ring-4 focus:ring-pet-blue/5 text-sm shadow-inner uppercase" placeholder="Ej: AZUL REY, CRISTAL, VERDE...">
+                                <input v-model="configForm.color" type="text" class="w-full h-12 bg-slate-50 border-none rounded-xl font-black px-6 focus:ring-4 focus:ring-indigo-500/5 text-sm shadow-inner uppercase" placeholder="Ej: AZUL REY, CRISTAL...">
                             </div>
                         </div>
                         <div class="lg:col-span-6 p-6 md:p-8 bg-slate-50/50 pr-16"> 
-                            <div class="flex justify-between items-center mb-4"><h3 class="text-[10px] font-black text-slate-800 uppercase tracking-widest">3. Mezcla (%)</h3><button @click="agregarFilaMaterial" class="text-[9px] font-black text-pet-blue uppercase px-3 py-1.5 bg-white rounded-lg shadow-sm">+ Añadir</button></div>
+                            <div class="flex justify-between items-center mb-4"><h3 class="text-[10px] font-black text-slate-800 uppercase tracking-widest">3. Mezcla (%)</h3><button @click="agregarFilaMaterial" class="text-[9px] font-black text-indigo-600 uppercase px-3 py-1.5 bg-white rounded-lg shadow-sm">+ Añadir</button></div>
                             <div class="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
                                 <div v-for="(m, i) in configForm.mezcla" :key="i" class="flex gap-2 mb-2 animate-in slide-in-from-right-4">
                                     <select v-model="m.materia_prima_id" class="flex-1 h-10 bg-white border-none rounded-xl text-[10px] font-bold shadow-sm text-slate-700">
                                         <option value="" disabled>Seleccionar Material...</option>
                                         <option v-for="mat in materiales" :key="mat.id" :value="mat.id">{{ mat.nombre }}</option>
                                     </select>
-                                    <div class="w-20 flex items-center bg-white rounded-xl px-2 shadow-sm"><input type="number" v-model="m.porcentaje" class="w-full border-none text-right font-black text-pet-blue text-xs focus:ring-0"><span class="text-[8px] font-bold text-slate-300 ml-1">%</span></div><button v-if="configForm.mezcla.length > 1" @click="quitarFilaMaterial(i)" class="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 transition-colors"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></button>
+                                    <div class="w-20 flex items-center bg-white rounded-xl px-2 shadow-sm"><input type="number" v-model="m.porcentaje" class="w-full border-none text-right font-black text-indigo-600 text-xs focus:ring-0"><span class="text-[8px] font-bold text-slate-300 ml-1">%</span></div><button v-if="configForm.mezcla.length > 1" @click="quitarFilaMaterial(i)" class="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 transition-colors">✕</button>
                                 </div>
                             </div>
-                            <div class="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between"><p class="text-xl font-black font-mono" :class="totalMezcla === 100 ? 'text-pet-green' : 'text-red-500'">{{ totalMezcla }}%</p><button @click="guardarConfig" :disabled="!configForm.producto_id || totalMezcla !== 100" class="px-6 h-12 bg-pet-green text-white rounded-xl font-black text-[10px] uppercase shadow-lg disabled:opacity-20 transition-all">Guardar 🚀</button></div>
+                            <div class="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
+                                <p class="text-xl font-black font-mono" :class="totalMezcla === 100 ? 'text-emerald-500' : 'text-red-500'">{{ totalMezcla }}%</p>
+                                <button @click="guardarConfig" :disabled="!configForm.producto_id || totalMezcla !== 100" class="px-6 h-12 bg-emerald-500 text-white rounded-xl font-black text-[10px] uppercase shadow-lg disabled:opacity-20 transition-all">
+                                    {{ isEditingExisting ? 'Actualizar Fase' : 'Guardar 🚀' }}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -456,11 +539,11 @@ const clonarVale = (i) => {
                 </div>
 
                 <div v-for="(reg, i) in registros" :key="i" 
-                    :class="['relative group bg-white rounded-2xl md:rounded-3xl p-4 md:p-6 transition-all duration-300 border shadow-sm', reg.hora === currentHourString ? 'border-pet-blue ring-4 ring-pet-blue/5 z-20' : 'border-slate-50 opacity-95']">
+                    :class="['relative group bg-white rounded-2xl md:rounded-3xl p-4 md:p-6 transition-all duration-300 border shadow-sm', reg.hora === currentHourString ? 'border-indigo-600 ring-4 ring-indigo-500/5 z-20' : 'border-slate-50 opacity-95']">
                     
                     <div class="flex flex-col lg:grid lg:grid-cols-12 items-stretch lg:items-center gap-4 md:gap-6">
                         <div class="lg:col-span-2 flex items-center justify-between lg:flex-col lg:justify-center gap-2 lg:border-r border-slate-100 lg:pr-6">
-                            <span :class="reg.hora === currentHourString ? 'text-pet-blue' : 'text-slate-400'" class="text-2xl font-black font-mono tracking-tighter">{{ reg.hora }}</span>
+                            <span :class="reg.hora === currentHourString ? 'text-indigo-600' : 'text-slate-400'" class="text-2xl font-black font-mono tracking-tighter">{{ reg.hora }}</span>
                             <span :class="['text-[8px] font-black px-2 py-1 rounded-lg border truncate lg:w-full text-center max-w-[150px]', reg.guardado ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-slate-50 border-transparent text-slate-300']">
                                 {{ reg.referencia_nombre || 'Pendiente' }}
                             </span>
@@ -468,7 +551,7 @@ const clonarVale = (i) => {
 
                         <div class="lg:col-span-3 flex flex-col">
                             <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 ml-1 tracking-widest">Vale / Lote</span>
-                            <div class="flex items-center gap-2"><input type="text" v-model="reg.num_vale" @input="reg.modificado = true" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 text-sm shadow-inner uppercase" placeholder="0000"><button @click="clonarVale(i)" class="p-2 text-slate-200 hover:text-pet-blue shrink-0 transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg></button></div>
+                            <div class="flex items-center gap-2"><input type="text" v-model="reg.num_vale" @input="reg.modificado = true" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 text-sm shadow-inner uppercase" placeholder="0000"><button @click="clonarVale(i)" class="p-2 text-slate-200 hover:text-indigo-600 shrink-0 transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg></button></div>
                         </div>
 
                         <div class="grid grid-cols-3 lg:contents gap-3">
@@ -478,7 +561,7 @@ const clonarVale = (i) => {
                              </div>
                              <div class="lg:col-span-1 flex flex-col">
                                 <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 text-center tracking-widest">Buenas</span>
-                                <input type="number" v-model="reg.buenas" @input="reg.modificado = true" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-lg text-pet-blue shadow-inner" placeholder="0">
+                                <input type="number" v-model="reg.buenas" @input="reg.modificado = true" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-lg text-indigo-600 shadow-inner" placeholder="0">
                              </div>
                              <div class="lg:col-span-1 flex flex-col">
                                 <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 text-center tracking-widest">Cav</span>
@@ -500,7 +583,7 @@ const clonarVale = (i) => {
                             <button @click="abrirParo(i)" :class="['flex-1 h-11 rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center gap-1', reg.paros.length > 0 ? 'bg-orange-500 text-white shadow-md' : 'bg-slate-50 text-slate-400 border border-slate-100']">
                                 PARO
                             </button>
-                            <button @click="syncHora(i)" :disabled="reg.procesando" :class="['flex-1 h-11 rounded-xl font-black text-[9px] uppercase transition-all shadow-sm flex items-center justify-center gap-2', reg.guardado ? 'bg-emerald-500 text-white shadow-emerald-500/20' : 'bg-pet-blue text-white']">
+                            <button @click="syncHora(i)" :disabled="reg.procesando" :class="['flex-1 h-11 rounded-xl font-black text-[9px] uppercase transition-all shadow-sm flex items-center justify-center gap-2', reg.guardado ? 'bg-emerald-500 text-white shadow-emerald-500/20' : 'bg-indigo-600 text-white']">
                                 <span v-if="reg.procesando" class="animate-spin border-2 border-white/30 border-t-white h-4 w-4 rounded-full"></span>
                                 <template v-else>{{ reg.guardado ? 'SYNC ✓' : 'SYNC' }}</template>
                             </button>
@@ -509,74 +592,6 @@ const clonarVale = (i) => {
                 </div>
             </div>
         </div>
-
-        <transition name="fade">
-            <div v-if="modalPerfil" class="fixed inset-0 z-[150] flex items-center justify-center p-2 sm:p-4 bg-slate-900/80 backdrop-blur-md">
-                <div class="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[95vh]">
-                    <div class="p-6 border-b flex justify-between items-center bg-indigo-50/50">
-                        <div>
-                            <h3 class="text-lg font-black text-indigo-900 uppercase leading-none">Seguimiento Perfil de Operación</h3>
-                            <p class="text-[10px] font-bold text-indigo-500 uppercase mt-1">Referencia: {{ faseAMostrar?.producto?.descripcion || 'No definida' }}</p>
-                        </div>
-                        <button @click="modalPerfil = false" class="h-10 w-10 bg-white rounded-full flex items-center justify-center text-slate-400 shadow-sm hover:bg-slate-100 transition-colors">✕</button>
-                    </div>
-                    
-                    <div class="p-6 overflow-y-auto custom-scrollbar flex-grow space-y-8">
-                        <div>
-                            <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                                <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z"></path></svg>
-                                Temperaturas (°C)
-                            </h4>
-                            <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ZONA 1</span><input v-model="perfilForm.temperaturas.zona1" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ZONA 2</span><input v-model="perfilForm.temperaturas.zona2" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ZONA 3</span><input v-model="perfilForm.temperaturas.zona3" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ZONA 4</span><input v-model="perfilForm.temperaturas.zona4" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">BOQUILLA</span><input v-model="perfilForm.temperaturas.boquilla" type="number" class="w-full h-11 bg-amber-50/50 border-none rounded-xl text-center font-black text-amber-600 shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">MOLDE</span><input v-model="perfilForm.temperaturas.molde" type="number" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-pet-blue shadow-inner"></div>
-                            </div>
-                        </div>
-
-                        <div>
-                            <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                                <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                Tiempos (Segundos)
-                            </h4>
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">INYECCIÓN</span><input v-model="perfilForm.tiempos.inyeccion" type="number" step="0.1" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">SOSTENIMIENTO</span><input v-model="perfilForm.tiempos.sostenimiento" type="number" step="0.1" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">ENFRIAMIENTO</span><input v-model="perfilForm.tiempos.enfriamiento" type="number" step="0.1" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-pet-blue shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">CICLO MÁQUINA</span><input v-model="perfilForm.tiempos.ciclo_maquina" type="number" step="0.1" class="w-full h-11 bg-emerald-50/50 border-none rounded-xl text-center font-black text-emerald-600 shadow-inner"></div>
-                            </div>
-                        </div>
-
-                        <div>
-                            <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                                <svg class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"></path></svg>
-                                Presiones (Bar / PSI)
-                            </h4>
-                            <div class="grid grid-cols-3 gap-3">
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">INYECCIÓN</span><input v-model="perfilForm.presiones.inyeccion" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">SOSTENIMIENTO</span><input v-model="perfilForm.presiones.sostenimiento" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
-                                <div><span class="text-[8px] font-bold text-slate-500 block text-center mb-1">CONTRAPRESIÓN</span><input v-model="perfilForm.presiones.contrapresion" type="number" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 shadow-inner"></div>
-                            </div>
-                        </div>
-                        
-                        <div>
-                            <h4 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Observaciones</h4>
-                            <textarea v-model="perfilForm.observaciones" rows="2" class="w-full bg-slate-50 border-none rounded-xl p-4 text-xs font-bold shadow-inner resize-none focus:ring-4 focus:ring-indigo-50" placeholder="Anotaciones sobre el ajuste..."></textarea>
-                        </div>
-                    </div>
-
-                    <div class="p-6 bg-slate-50 border-t flex gap-4">
-                        <button @click="modalPerfil = false" class="py-4 px-8 text-xs font-black uppercase text-slate-400 hover:text-slate-600 transition-colors">Cerrar</button>
-                        <button @click="guardarPerfilOperacion" class="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-xl shadow-indigo-600/30 hover:bg-indigo-700 transition-all hover:scale-[1.02]">
-                            Guardar Perfil en Bitácora
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </transition>
 
         <transition name="fade">
             <div v-if="modalPnc" class="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -640,13 +655,13 @@ const clonarVale = (i) => {
             <div v-if="modalInspeccion" class="fixed inset-0 z-[130] flex items-center justify-center p-2 bg-slate-900/80 backdrop-blur-md">
                 <div class="bg-white w-full max-w-lg rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[95vh] animate-in zoom-in-95">
                     <div class="p-6 border-b flex justify-between items-center bg-slate-50">
-                        <div><h3 class="text-sm font-black text-slate-800 uppercase leading-none">Inspección de Preformas</h3><p class="text-[9px] font-bold text-pet-blue uppercase mt-1">Hora: {{ registros[indexActivo].hora }} | Cavidades Reportadas: {{ registros[indexActivo].cav }}</p></div>
+                        <div><h3 class="text-sm font-black text-slate-800 uppercase leading-none">Inspección de Preformas</h3><p class="text-[9px] font-bold text-indigo-600 uppercase mt-1">Hora: {{ registros[indexActivo].hora }} | Cavidades Reportadas: {{ registros[indexActivo].cav }}</p></div>
                         <button @click="modalInspeccion = false" class="h-8 w-8 bg-white rounded-full shadow-sm text-slate-400 flex items-center justify-center hover:bg-red-50 hover:text-red-500 transition-all">✕</button>
                     </div>
                     <div class="p-4 flex-grow overflow-y-auto custom-scrollbar">
                         <div class="grid grid-cols-6 gap-2 mb-6">
                             <button v-for="n in parseInt(registros[indexActivo].cav)" :key="n" @click="cavidadSeleccionada = n"
-                                :class="['h-12 rounded-xl text-[10px] font-black border-2 transition-all flex flex-col items-center justify-center', cavidadSeleccionada === n ? 'border-pet-blue bg-blue-50 text-pet-blue scale-110 z-10' : (registros[indexActivo].inspeccion.find(i => i.cav === n) ? 'border-red-500 bg-red-50 text-red-600' : 'border-emerald-500 bg-emerald-50 text-emerald-600')]">
+                                :class="['h-12 rounded-xl text-[10px] font-black border-2 transition-all flex flex-col items-center justify-center', cavidadSeleccionada === n ? 'border-indigo-600 bg-blue-50 text-indigo-600 scale-110 z-10' : (registros[indexActivo].inspeccion.find(i => i.cav === n) ? 'border-red-500 bg-red-50 text-red-600' : 'border-emerald-500 bg-emerald-50 text-emerald-600')]">
                                 <span class="opacity-40 text-[7px]">CAV</span>{{ n }}
                                 <span v-if="registros[indexActivo].inspeccion.find(i => i.cav === n)" class="text-[8px] mt-0.5">Def: {{ pncCatalogo.find(p => p.id === registros[indexActivo].inspeccion.find(i => i.cav === n).defecto)?.nombre.substring(0,5) || '...' }}</span>
                                 <span v-else class="text-[8px] mt-0.5 opacity-40">OK</span>
@@ -669,6 +684,7 @@ const clonarVale = (i) => {
                 </div>
             </div>
         </transition>
+
     </AuthenticatedLayout>
 </template>
 

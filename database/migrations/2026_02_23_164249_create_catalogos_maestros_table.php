@@ -5,7 +5,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
-    public function up(): void {
+    public function up(): void
+    {
         // 1. Catálogo de Máquinas
         Schema::create('maquinas', function (Blueprint $table) {
             $table->id();
@@ -16,15 +17,22 @@ return new class extends Migration {
         });
 
         // 2. Catálogo Maestro de Referencias (Productos)
-        // Basado en tu archivo "BASE REFERENCIAS.csv"
+        // database/migrations/xxxx_xx_xx_create_productos_table.php
         Schema::create('productos', function (Blueprint $table) {
             $table->id();
-            $table->string('item')->unique();           // El código numérico (ej: 2591.0)
-            $table->string('descripcion');              // Nombre del producto
-            $table->string('area')->nullable();         // Area (ej: TAPA Y ASA)
-            $table->decimal('ciclo', 8, 2)->nullable(); // Ciclo estándar
-            $table->integer('cavidades')->nullable();   // Cavidades estándar
-            $table->string('materia_prima')->default('PET'); 
+            $table->string('ref_maq')->nullable();           // REF + MAQ
+            $table->string('item')->unique();               // Item
+            $table->string('descripcion');                  // Desc. item
+            $table->string('tipo_inventario')->nullable();  // Tipo inventari
+            $table->string('area')->nullable();             // AREA
+            $table->string('preforma')->nullable();         // Preforma (Cambiado de preforma_base)
+            $table->decimal('ciclo', 8, 2)->nullable();     // Ciclo
+            $table->string('maquina')->nullable();          // Maquina (Cambiado de maquina_ideal)
+            $table->integer('cavidades')->nullable();       // Cavidades
+            $table->integer('bot_hora')->nullable();        // BOT/HORA
+            $table->string('unidad_empaque')->nullable();   // UNIDAD DE EMPAQUE
+            $table->string('centro_trabajo')->nullable();   // Centro de trab
+
             $table->softDeletes();
             $table->timestamps();
         });
@@ -59,7 +67,7 @@ return new class extends Migration {
         // database/migrations/xxxx_xx_xx_create_paradas_catalogo_table.php
         Schema::create('paradas_catalogo', function (Blueprint $table) {
             $table->uuid('id')->primary(); // Estándar Fase I [cite: 22]
-            $table->string('codigo')->unique(); 
+            $table->string('codigo')->unique();
             $table->string('falla');
             $table->string('categoria')->nullable();
             $table->timestamps();
@@ -76,11 +84,10 @@ return new class extends Migration {
             $table->timestamps();
             $table->softDeletes(); // Integridad de datos industriales
         });
-
-
     }
 
-    public function down(): void {
+    public function down(): void
+    {
         Schema::dropIfExists('anomalias_produccion');
         Schema::dropIfExists('moldes');
         Schema::dropIfExists('productos'); // Eliminar la nueva tabla
