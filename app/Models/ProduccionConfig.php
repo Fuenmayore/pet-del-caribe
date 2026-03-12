@@ -41,4 +41,9 @@ class ProduccionConfig extends Model
     {
         return $this->belongsTo(Turno::class);
     }
+
+    public function perfilesOperacion()
+    {
+        return $this->hasMany(PerfilOperacion::class, 'config_id');
+    }
 }

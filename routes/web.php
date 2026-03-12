@@ -37,18 +37,21 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
     // 2. Grupo de Producción Inyección
-    Route::prefix('produccion/inyeccion')->name('produccion.')->group(function () {
-        Route::get('/', [ProduccionController::class, 'index'])->name('index');
-        Route::get('/config/{maquina}', [ProduccionController::class, 'config'])->name('config');
-        Route::post('/store', [ProduccionController::class, 'store'])->name('store');
-        Route::get('/registro/{turno}', [ProduccionController::class, 'registro'])->name('registro');
-        Route::post('/configurar/{turno}', [ProduccionController::class, 'guardarConfiguracion'])->name('configurar');
-        Route::post('/guardar-hora', [ProduccionController::class, 'guardarHora'])->name('guardarHora');
-        Route::post('/finalizar/{turno}', [ProduccionController::class, 'finalizar'])->name('finalizar');
-        Route::delete('/{turno}', [ProduccionController::class, 'destroy'])->name('destroy');
-        // Agrega esta línea:
-        Route::get('/analisis/{turno}', [ProduccionController::class, 'analisis'])->name('analisis');
-    });
+        Route::prefix('produccion/inyeccion')->name('produccion.')->group(function () {
+            Route::get('/', [ProduccionController::class, 'index'])->name('index');
+            Route::get('/config/{maquina}', [ProduccionController::class, 'config'])->name('config');
+            Route::post('/store', [ProduccionController::class, 'store'])->name('store');
+            Route::get('/registro/{turno}', [ProduccionController::class, 'registro'])->name('registro');
+            Route::post('/configurar/{turno}', [ProduccionController::class, 'guardarConfiguracion'])->name('configurar');
+            Route::post('/guardar-hora', [ProduccionController::class, 'guardarHora'])->name('guardarHora');
+            Route::post('/finalizar/{turno}', [ProduccionController::class, 'finalizar'])->name('finalizar');
+            Route::delete('/{turno}', [ProduccionController::class, 'destroy'])->name('destroy');
+            Route::get('/analisis/{turno}', [ProduccionController::class, 'analisis'])->name('analisis');
+            
+            // --- NUEVA RUTA CORREGIDA ---
+            Route::get('/{turno}/perfil', [ProduccionController::class, 'crearPerfil'])->name('crearPerfil');
+            Route::post('/{turno}/perfil', [ProduccionController::class, 'guardarPerfil'])->name('guardarPerfil');
+        });
 
     // 3. GRUPO DE CONFIGURACIONES GLOBAL (Settings)
     Route::prefix('configuraciones')->name('settings.')->group(function () {

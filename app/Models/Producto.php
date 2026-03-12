@@ -10,28 +10,35 @@ class Producto extends Model
 {
     use HasFactory, SoftDeletes;
 
-    // Nombre de la tabla (opcional si sigue el estándar, pero mejor asegurar)
     protected $table = 'productos';
 
     /**
-     * Campos habilitados para carga masiva (Mass Assignment).
-     * IMPORTANTE: Estos deben coincidir con los que usas en el Seeder.
+     * Campos habilitados para carga masiva.
+     * Sincronizados con la tabla de Excel (REF + MAQ, Item, Desc, etc.)
      */
     protected $fillable = [
-        'item',
-        'descripcion',
-        'area',
-        'ciclo',
-        'cavidades',
-        'materia_prima',
+        'ref_maq',          // REF + MAQ
+        'item',             // Item
+        'descripcion',      // Desc. item
+        'tipo_inventario',  // Tipo inventari
+        'area',             // AREA
+        'preforma',         // Preforma
+        'ciclo',            // Ciclo
+        'maquina',          // Maquina
+        'cavidades',        // Cavidades
+        'bot_hora',         // BOT/HORA
+        'unidad_empaque',   // UNIDAD DE EMPAQUE
+        'centro_trabajo'    // Centro de trab
     ];
 
     /**
-     * Casteo de tipos para asegurar que los números se manejen correctamente.
+     * Casteo de tipos. 
+     * Vital para que el Dashboard de Análisis reciba números reales y no strings.
      */
     protected $casts = [
-        'ciclo' => 'decimal:2',
+        'ciclo'     => 'decimal:2',
         'cavidades' => 'integer',
+        'bot_hora'  => 'integer',
     ];
 
     /**
