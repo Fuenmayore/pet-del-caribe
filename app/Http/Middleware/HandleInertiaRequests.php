@@ -32,8 +32,17 @@ class HandleInertiaRequests extends Middleware
         return [
             ...parent::share($request),
             'auth' => [
-                'user' => $request->user(),
+                // Modificamos esto para enviar roles y permisos
+                'user' => $request->user() ? [
+                    'id' => $request->user()->id,
+                    'nombre' => $request->user()->nombre, // O 'name', según tu base de datos
+                    'email' => $request->user()->email,
+                    // AGREGAMOS ESTAS DOS LÍNEAS:
+                    'roles' => $request->user()->getRoleNames(),
+                    'permissions' => $request->user()->getAllPermissions()->pluck('name'),
+                ] : null,
             ],
+            // ... tus otros datos compartidos como flash messages ...
         ];
     }
 }
