@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { useForm, router, Head, Link } from '@inertiajs/vue3';
+import { useForm, router, Head, Link, usePage } from '@inertiajs/vue3';
 
 const props = defineProps({ 
     turno: Object, 
@@ -13,13 +13,29 @@ const props = defineProps({
     perfilesGuardados: Array 
 });
 
+const page = usePage();
+
+// --- LÓGICA DE PERMISOS: ¿Puede este usuario modificar esta fila? ---
+const canEditRow = (reg) => {
+    // NUEVA REGLA: Si el turno está cerrado, desaparecen los botones de edición/sync para todos
+    if (props.turno.estado !== 'Abierto') {
+        return false;
+    }
+
+    const perms = page.props.auth.user.permissions || [];
+    if (reg.guardado) {
+        return perms.includes('registro_horario.editar');
+    }
+    return perms.includes('registro_horario.crear');
+};
+
 const finalizarTurno = () => {
     if (confirm('¿Estás seguro de finalizar el turno? Una vez cerrado pasará al historial y no podrás registrar más horas.')) {
         router.post(route('produccion.finalizar', props.turno.id));
     }
 };
 
-// --- KPIs AUDITADOS (UNIFICADOS CON VISTA ANÁLISIS) ---
+// --- KPIs GARANTIZADOS (Siempre calcula si hay datos) ---
 const kpisCalculados = computed(() => {
     let totalBuenas = 0;
     let totalScrapKg = 0;
@@ -27,12 +43,10 @@ const kpisCalculados = computed(() => {
     let metaTotalAcumulada = 0;
 
     registros.value.forEach(reg => {
-        // Solo procesamos horas que tengan algún dato o ya estén guardadas en DB
         if (reg.guardado || reg.buenas > 0 || reg.pnc.length > 0 || reg.paros.length > 0) {
             
             totalBuenas += (parseInt(reg.buenas) || 0);
 
-            // Sumar Scrap en Kilogramos
             if (reg.pnc && reg.pnc.length > 0) {
                 reg.pnc.forEach(p => {
                     totalScrapKg += (parseFloat(p.malas_kg) || 0) + 
@@ -41,24 +55,20 @@ const kpisCalculados = computed(() => {
                 });
             }
 
-            // Sumar Minutos de Paro
             if (reg.paros && reg.paros.length > 0) {
                 reg.paros.forEach(p => {
                     totalMinutosParo += (parseInt(p.minutos) || 0);
                 });
             }
 
-            // --- LÓGICA DE META ESTRICTA (IGUAL A ANÁLISIS) ---
             const config = props.turno.configuraciones?.find(c => c.id === reg.config_id) || props.turno.config_activa;
             
-            if (config && config.producto) {
-                const cicloStd = parseFloat(config.producto.ciclo || 0);
-                const cavStd = parseInt(config.producto.cavidades || 0); // USA ESTÁNDAR, NO reg.cav
+            const cicloAUsar = parseFloat(config?.producto?.ciclo) || parseFloat(reg.ciclo) || 0;
+            const cavidadesAUsar = parseInt(config?.producto?.cavidades) || parseInt(reg.cav) || 0;
 
-                if (cicloStd > 0) {
-                    const metaHora = (3600 / cicloStd) * cavStd;
-                    metaTotalAcumulada += metaHora;
-                }
+            if (cicloAUsar > 0 && cavidadesAUsar > 0) {
+                const metaHora = (3600 / cicloAUsar) * cavidadesAUsar;
+                metaTotalAcumulada += metaHora;
             }
         }
     });
@@ -129,7 +139,7 @@ const generarHorasPorTurno = (numeroTurno, duracion = 8) => {
         horaInicio = (numeroTurno == 1) ? 7 : (numeroTurno == 2 ? 15 : 23);
     }
     return Array.from({ length: duracion }, (_, i) => ({
-        id: null, // SOPORTE UUID
+        id: null, 
         hora: `${String((horaInicio + i) % 24).padStart(2, '0')}:00`,
         num_vale: '', ciclo: '', buenas: '', cav: '', 
         pnc: [], paros: [], 
@@ -160,7 +170,7 @@ const cargarDatosExistentes = () => {
                 horas.forEach(dbHora => {
                     const fila = registros.value.find(r => dbHora.hora.startsWith(r.hora));
                     if (fila && !fila.modificado) {
-                        fila.id = dbHora.id; // GUARDAMOS EL UUID
+                        fila.id = dbHora.id; 
                         fila.num_vale = dbHora.num_vale_inyectora;
                         fila.buenas = dbHora.unidades_buenas;
                         if(dbHora.pnc_detalle?.ciclo_real) fila.ciclo = dbHora.pnc_detalle.ciclo_real;
@@ -200,7 +210,6 @@ onMounted(() => {
 
 onUnmounted(() => { if (pollInterval) clearInterval(pollInterval); });
 
-// --- LÓGICA PARA EDITAR FASE ---
 const editandoConfig = ref(!props.turno.config_activa);
 const isEditingExisting = ref(false);
 
@@ -291,7 +300,9 @@ const finalizarInspeccion = () => {
     const index = indexActivo.value;
     registros.value[index].inspeccion_completada = true;
     modalInspeccion.value = false;
-    syncHora(index); 
+    if (canEditRow(registros.value[index])) {
+        syncHora(index); 
+    }
 };
 
 const actualizarCategoriaParo = (p) => {
@@ -299,7 +310,6 @@ const actualizarCategoriaParo = (p) => {
     if (seleccion) p.categoria = seleccion.categoria;
 };
 
-// --- LÓGICA SYNC BLINDADA ---
 const syncHora = (index) => {
     const fila = registros.value[index];
     if (!fila.inspeccion_completada) {
@@ -330,7 +340,6 @@ const syncHora = (index) => {
             fila.modificado = false; 
             fila.config_id = configIdDestino; // Confirmar anclaje de fase local
             
-            // Refrescar nombre local en caso de que sea nuevo
             const faseAplicada = props.turno.configuraciones?.find(c => c.id === configIdDestino) || props.turno.config_activa;
             if (faseAplicada) fila.referencia_nombre = faseAplicada.producto?.descripcion;
             
@@ -368,17 +377,18 @@ const clonarVale = (i) => {
         <template #header>
             <div class="flex items-center justify-between w-full">
                 <div class="flex items-center gap-3">
-                    <div class="p-2 bg-slate-900 text-white rounded-lg shadow-lg">
+                    <div class="p-2 bg-pet-blue text-white rounded-lg shadow-lg">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                     </div>
                     <div>
                         <h2 class="text-sm font-black text-slate-800 uppercase leading-none">Monitor Inyección</h2>
-                        <p class="text-[9px] font-bold text-indigo-600 uppercase mt-0.5">{{ turno.maquina.nombre }}</p>
+                        <p class="text-[9px] font-bold text-pet-blue uppercase mt-0.5">{{ turno.maquina.nombre }}</p>
                     </div>
                 </div>
 
                 <div class="bg-slate-900 text-white px-4 py-1.5 rounded-lg border border-slate-800 flex items-center gap-2 shadow-sm">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span v-if="turno.estado === 'Abierto'" class="w-1.5 h-1.5 rounded-full bg-pet-green animate-pulse"></span>
+                    <span v-else class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
                     <span class="text-[9px] font-black uppercase tracking-widest">TURNO #{{ turno.numero_turno }} ({{ turno.duracion_turno }}H)</span>
                 </div>
             </div>
@@ -387,7 +397,6 @@ const clonarVale = (i) => {
         <div class="max-w-7xl mx-auto p-3 md:p-6 space-y-6 pb-40">
             
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-                
                 <div class="bg-slate-900 p-4 md:p-5 rounded-2xl shadow-xl border border-slate-800 flex items-center justify-between group">
                     <div>
                         <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">OEE Desempeño (Auditado)</p>
@@ -427,7 +436,6 @@ const clonarVale = (i) => {
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     </div>
                 </div>
-
             </div>
 
             <div class="space-y-3">
@@ -452,12 +460,12 @@ const clonarVale = (i) => {
                     
                     <div class="flex flex-wrap items-center gap-2 md:gap-3 w-full md:w-auto justify-end">
                         
-                        <button @click="prepararEdicionFase(faseAMostrar)" 
+                        <button v-if="$can('moldes.corregir_historial') && turno.estado === 'Abierto'" @click="prepararEdicionFase(faseAMostrar)" 
                             :class="['text-[9px] font-bold underline underline-offset-2 transition-colors mr-2', esFaseActiva ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-900']">
                             Corregir Ref.
                         </button>
 
-                        <Link v-if="esFaseActiva" :href="route('produccion.crearPerfil', props.turno.id)" 
+                        <Link v-if="esFaseActiva && ($can('perfiles.crear') || $can('perfiles.ver'))" :href="route('produccion.crearPerfil', props.turno.id)" 
                             class="px-5 py-2.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white shadow-sm flex items-center gap-2 transition-all relative">
                             <span v-if="perfilesGuardadosCount > 0" 
                                   :class="['absolute -top-2 -right-2 flex h-5 w-5 rounded-full items-center justify-center text-[10px] text-white border-2 border-white shadow-sm', 
@@ -467,16 +475,16 @@ const clonarVale = (i) => {
                             Perfil Operación
                         </Link>
 
-                        <button v-if="esFaseActiva" @click="prepararNuevoMolde" class="px-5 py-2.5 bg-white text-slate-900 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-emerald-400 shadow-sm flex items-center gap-2 transition-colors">
+                        <button v-if="esFaseActiva && $can('moldes.cambiar') && turno.estado === 'Abierto'" @click="prepararNuevoMolde" class="px-5 py-2.5 bg-white text-slate-900 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-emerald-400 shadow-sm flex items-center gap-2 transition-colors">
                             ⚙️ Cambiar Molde
                         </button>
 
-                        <button v-if="esFaseActiva" @click="finalizarTurno" 
+                        <button v-if="esFaseActiva && $can('turnos.finalizar') && turno.estado === 'Abierto'" @click="finalizarTurno" 
                             class="px-6 py-2.5 bg-red-600 text-white rounded-xl text-[9px] font-black uppercase shadow-lg shadow-red-500/30 hover:bg-red-700 hover:-translate-y-0.5 transition-all">
                             Finalizar Turno
                         </button>
 
-                        <button v-else @click="faseSeleccionadaManual = null" class="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase shadow-sm">Ver Actual</button>
+                        <button v-if="turno.estado !== 'Abierto' || !esFaseActiva" @click="faseSeleccionadaManual = null" class="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase shadow-sm">Ver Actual</button>
                     </div>
                 </div>
             </div>
@@ -531,11 +539,8 @@ const clonarVale = (i) => {
             </transition>
 
             <div class="space-y-4">
-                <div class="hidden lg:grid lg:grid-cols-12 px-10 mb-2 text-slate-400 font-black uppercase text-[9px] tracking-widest">
-                    <div class="lg:col-span-2">Hora / Ref</div>
-                    <div class="lg:col-span-3 text-center">Vale / Lote</div> <div class="lg:col-span-1 text-center font-mono">Ciclo</div>
-                    <div class="lg:col-span-1 text-center">Buenas</div> <div class="lg:col-span-1 text-center">Cav</div>
-                    <div class="lg:col-span-4 text-center">Acciones</div>
+                <div class="hidden lg:grid lg:grid-cols-12 px-10 mb-2 text-slate-400 font-black uppercase text-[9px] tracking-widest text-center">
+                    <div class="lg:col-span-2 text-left">Hora / Ref</div><div class="lg:col-span-3">Vale / Lote</div><div class="lg:col-span-1">Ciclo</div><div class="lg:col-span-1">Buenas</div><div class="lg:col-span-1">Cav</div><div class="lg:col-span-4">Acciones</div>
                 </div>
 
                 <div v-for="(reg, i) in registros" :key="i" 
@@ -551,7 +556,12 @@ const clonarVale = (i) => {
 
                         <div class="lg:col-span-3 flex flex-col">
                             <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 ml-1 tracking-widest">Vale / Lote</span>
-                            <div class="flex items-center gap-2"><input type="text" v-model="reg.num_vale" @input="reg.modificado = true" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 text-sm shadow-inner uppercase" placeholder="0000"><button @click="clonarVale(i)" class="p-2 text-slate-200 hover:text-indigo-600 shrink-0 transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg></button></div>
+                            <div class="flex items-center gap-2">
+                                <input type="text" v-model="reg.num_vale" @input="reg.modificado = true" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 text-sm shadow-inner uppercase" placeholder="0000">
+                                <button v-if="canEditRow(reg)" @click="clonarVale(i)" class="p-2 text-slate-200 hover:text-indigo-600 shrink-0 transition-colors">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg>
+                                </button>
+                            </div>
                         </div>
 
                         <div class="grid grid-cols-3 lg:contents gap-3">
@@ -580,10 +590,12 @@ const clonarVale = (i) => {
                             <button @click="abrirPnc(i)" :class="['flex-1 h-11 rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center gap-1', reg.pnc.length > 0 ? 'bg-red-500 text-white shadow-md' : 'bg-slate-50 text-slate-400 border border-slate-100']">
                                 PNC
                             </button>
+                            
                             <button @click="abrirParo(i)" :class="['flex-1 h-11 rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center gap-1', reg.paros.length > 0 ? 'bg-orange-500 text-white shadow-md' : 'bg-slate-50 text-slate-400 border border-slate-100']">
                                 PARO
                             </button>
-                            <button @click="syncHora(i)" :disabled="reg.procesando" :class="['flex-1 h-11 rounded-xl font-black text-[9px] uppercase transition-all shadow-sm flex items-center justify-center gap-2', reg.guardado ? 'bg-emerald-500 text-white shadow-emerald-500/20' : 'bg-indigo-600 text-white']">
+                            
+                            <button v-if="canEditRow(reg)" @click="syncHora(i)" :disabled="reg.procesando" :class="['flex-1 h-11 rounded-xl font-black text-[9px] uppercase transition-all shadow-sm flex items-center justify-center gap-2', reg.guardado ? 'bg-emerald-500 text-white shadow-emerald-500/20' : 'bg-indigo-600 text-white']">
                                 <span v-if="reg.procesando" class="animate-spin border-2 border-white/30 border-t-white h-4 w-4 rounded-full"></span>
                                 <template v-else>{{ reg.guardado ? 'SYNC ✓' : 'SYNC' }}</template>
                             </button>
@@ -612,12 +624,17 @@ const clonarVale = (i) => {
                                     </div>
                                     <div class="sm:col-span-2"><span class="text-[7px] font-black text-slate-400 uppercase">Causa</span><input type="text" v-model="item.causa" class="w-full h-9 bg-white border-none rounded-lg text-[10px] font-bold" placeholder="..."></div>
                                 </div>
-                                <button @click="registros[indexActivo].pnc.splice(idx, 1)" class="w-full text-[8px] font-black text-red-400 uppercase text-right hover:text-red-600 transition-colors">✕ Eliminar</button>
+                                <button v-if="canEditRow(registros[indexActivo])" @click="registros[indexActivo].pnc.splice(idx, 1)" class="w-full text-[8px] font-black text-red-400 uppercase text-right hover:text-red-600 transition-colors">✕ Eliminar</button>
                             </div>
                         </div>
-                        <button @click="agregarDefecto" class="w-full mt-4 py-3 border-2 border-dashed border-slate-200 rounded-xl text-[9px] font-black text-slate-400 uppercase hover:bg-slate-50 transition-all">+ Añadir Registro</button>
+                        <button v-if="canEditRow(registros[indexActivo])" @click="agregarDefecto" class="w-full mt-4 py-3 border-2 border-dashed border-slate-200 rounded-xl text-[9px] font-black text-slate-400 uppercase hover:bg-slate-50 transition-all">+ Añadir Registro</button>
                     </div>
-                    <div class="bg-slate-50 p-4 flex justify-between items-center"><div class="text-[10px] font-black text-red-600 uppercase">Total: {{ (registros[indexActivo].pnc.reduce((acc, i) => acc + (parseFloat(i.malas_kg) || 0) + (parseFloat(i.cont_kg) || 0) + (parseFloat(i.torta_kg) || 0), 0)).toFixed(2) }} Kg</div><button @click="modalPnc = false" class="px-8 py-2 bg-red-600 text-white rounded-xl text-[9px] font-black uppercase shadow-lg">Finalizar</button></div>
+                    <div class="bg-slate-50 p-4 flex justify-between items-center">
+                        <div class="text-[10px] font-black text-red-600 uppercase">Total: {{ (registros[indexActivo].pnc.reduce((acc, i) => acc + (parseFloat(i.malas_kg) || 0) + (parseFloat(i.cont_kg) || 0) + (parseFloat(i.torta_kg) || 0), 0)).toFixed(2) }} Kg</div>
+                        <button @click="modalPnc = false" class="px-8 py-2 bg-red-600 text-white rounded-xl text-[9px] font-black uppercase shadow-lg">
+                            {{ canEditRow(registros[indexActivo]) ? 'Finalizar' : 'Cerrar' }}
+                        </button>
+                    </div>
                 </div>
             </div>
         </transition>
@@ -641,12 +658,17 @@ const clonarVale = (i) => {
                                     </div>
                                     <div class="sm:col-span-12"><span class="text-[7px] font-black text-slate-400 uppercase">DETALLE</span><input type="text" v-model="p.motivo" class="w-full h-9 bg-white border-none rounded-lg text-[10px] font-bold" placeholder="..."></div>
                                 </div>
-                                <button @click="registros[indexActivo].paros.splice(idx, 1)" class="w-full text-[8px] font-black text-red-400 uppercase text-right">✕ Eliminar</button>
+                                <button v-if="canEditRow(registros[indexActivo])" @click="registros[indexActivo].paros.splice(idx, 1)" class="w-full text-[8px] font-black text-red-400 uppercase text-right">✕ Eliminar</button>
                             </div>
                         </div>
-                        <button @click="agregarParo" class="w-full mt-4 py-3 border-2 border-dashed border-slate-200 rounded-xl text-[9px] font-black text-slate-400 uppercase hover:bg-slate-50 transition-all">+ Registrar Nuevo Paro</button>
+                        <button v-if="canEditRow(registros[indexActivo])" @click="agregarParo" class="w-full mt-4 py-3 border-2 border-dashed border-slate-200 rounded-xl text-[9px] font-black text-slate-400 uppercase hover:bg-slate-50 transition-all">+ Registrar Nuevo Paro</button>
                     </div>
-                    <div class="bg-slate-50 p-4 flex justify-between items-center"><div class="text-[10px] font-black text-orange-600 uppercase">Total: {{ registros[indexActivo].paros.reduce((acc, p) => acc + (parseInt(p.minutos) || 0), 0) }} min</div><button @click="modalParo = false" class="px-8 py-2 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase shadow-lg">Finalizar</button></div>
+                    <div class="bg-slate-50 p-4 flex justify-between items-center">
+                        <div class="text-[10px] font-black text-orange-600 uppercase">Total: {{ registros[indexActivo].paros.reduce((acc, p) => acc + (parseInt(p.minutos) || 0), 0) }} min</div>
+                        <button @click="modalParo = false" class="px-8 py-2 bg-orange-500 text-white rounded-xl text-[9px] font-black uppercase shadow-lg">
+                            {{ canEditRow(registros[indexActivo]) ? 'Finalizar' : 'Cerrar' }}
+                        </button>
+                    </div>
                 </div>
             </div>
         </transition>
@@ -673,13 +695,18 @@ const clonarVale = (i) => {
                                 <button v-for="d in pncCatalogo" :key="d.id" @click="asignarDefectoACavidad(d.id)" class="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg text-[9px] font-bold border border-white/5 transition-all text-center leading-tight">
                                     {{ d.nombre }}
                                 </button>
-                                <button @click="asignarDefectoACavidad(null)" class="col-span-full mt-2 py-2.5 bg-red-600/30 text-red-300 rounded-xl text-[9px] font-black uppercase border border-red-500/20">Limpiar Defecto</button>
+                                <button v-if="canEditRow(registros[indexActivo])" @click="asignarDefectoACavidad(null)" class="col-span-full mt-2 py-2.5 bg-red-600/30 text-red-300 rounded-xl text-[9px] font-black uppercase border border-red-500/20">Limpiar Defecto</button>
                             </div>
                         </div>
                     </div>
                     <div class="p-6 bg-slate-50 border-t flex gap-3">
-                        <button v-if="registros[indexActivo].inspeccion.length === 0" @click="finalizarInspeccion" class="flex-1 py-4 bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-emerald-600 transition-all">TODAS LAS CAVIDADES OK √</button>
-                        <button v-else @click="finalizarInspeccion" class="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase shadow-xl">CONFIRMAR DEFECTOS ({{ registros[indexActivo].inspeccion.length }})</button>
+                        <button v-if="!canEditRow(registros[indexActivo])" @click="modalInspeccion = false" class="flex-1 py-4 bg-slate-400 text-white rounded-2xl font-black text-xs uppercase shadow-xl transition-all">
+                            CERRAR VISUALIZACIÓN
+                        </button>
+                        <template v-else>
+                            <button v-if="registros[indexActivo].inspeccion.length === 0" @click="finalizarInspeccion" class="flex-1 py-4 bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-emerald-600 transition-all">TODAS LAS CAVIDADES OK √</button>
+                            <button v-else @click="finalizarInspeccion" class="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase shadow-xl">CONFIRMAR DEFECTOS ({{ registros[indexActivo].inspeccion.length }})</button>
+                        </template>
                     </div>
                 </div>
             </div>

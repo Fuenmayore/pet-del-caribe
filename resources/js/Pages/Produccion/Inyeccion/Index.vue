@@ -62,7 +62,7 @@ const obtenerTotalesTurno = (turno) => {
                                     <h4 class="text-lg font-black text-pet-blue leading-none truncate">{{ turno.maquina?.nombre }}</h4>
                                 </div>
                             </div>
-                            <button @click.stop="eliminarTurno(turno.id)" class="p-2 text-slate-200 hover:text-red-500 transition-colors">
+                            <button v-if="$can('turnos.cancelar')" @click.stop="eliminarTurno(turno.id)" class="p-2 text-slate-200 hover:text-red-500 transition-colors">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                         </div>
@@ -83,7 +83,7 @@ const obtenerTotalesTurno = (turno) => {
                 </div>
             </div>
 
-            <div>
+            <div v-if="$can('turnos.abrir')">
                 <div class="flex items-center gap-3 mb-6 px-2">
                     <h3 class="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Estaciones Disponibles</h3>
                 </div>
@@ -144,7 +144,7 @@ const obtenerTotalesTurno = (turno) => {
                                 </td>
                                 <td class="py-5 px-4 text-right">
                                     <div class="flex justify-end gap-2">
-                                        <Link :href="route('produccion.analisis', h.id)" 
+                                        <Link v-if="$can('analisis.ver')" :href="route('produccion.analisis', h.id)" 
                                             class="inline-flex h-9 w-9 items-center justify-center bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-amber-500 hover:border-amber-500 shadow-sm transition-all"
                                             title="Análisis de Eficiencia">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -196,7 +196,7 @@ const obtenerTotalesTurno = (turno) => {
                                 <span v-if="h.configuraciones.length > 3" class="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-slate-100 flex items-center justify-center text-[7px] font-black text-slate-400">+{{ h.configuraciones.length - 3 }}</span>
                             </div>
                             <div class="flex gap-2">
-                                <Link :href="route('produccion.analisis', h.id)" 
+                                <Link v-if="$can('analisis.ver')" :href="route('produccion.analisis', h.id)" 
                                     class="p-2.5 bg-amber-100 text-amber-600 rounded-xl shadow-sm active:scale-95 transition-all">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
                                 </Link>

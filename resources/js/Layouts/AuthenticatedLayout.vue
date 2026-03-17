@@ -116,15 +116,15 @@ const toggleSidebar = () => {
                     </div>
                 </div>
 
-                <Link :href="route('settings.index')" 
+                <Link v-if="$can('catalogos.ver')" :href="route('settings.index')" 
                     :class="[
                         'relative flex items-center gap-4 p-3.5 rounded-xl transition-all duration-300 group',
-                        route().current('produccion.settings.*') 
+                        route().current('settings.*') 
                             ? 'bg-white/10 text-white shadow-[inset_0_0_20px_rgba(255,255,255,0.05)]' 
                             : 'hover:bg-white/5 text-blue-100/60 hover:text-white'
                     ]">
-                    <div v-if="route().current('produccion.settings.*')" class="absolute left-0 top-1/4 bottom-1/4 w-1 bg-pet-green rounded-r-full shadow-[0_0_15px_#10b981]"></div>
-                    <svg :class="route().current('produccion.settings.*') ? 'text-pet-green' : 'group-hover:text-pet-green'" 
+                    <div v-if="route().current('settings.*')" class="absolute left-0 top-1/4 bottom-1/4 w-1 bg-pet-green rounded-r-full shadow-[0_0_15px_#10b981]"></div>
+                    <svg :class="route().current('settings.*') ? 'text-pet-green' : 'group-hover:text-pet-green'" 
                          class="w-6 h-6 flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -193,3 +193,16 @@ const toggleSidebar = () => {
         </div>
     </div>
 </template>
+
+<style scoped>
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+.custom-scrollbar::-webkit-scrollbar { height: 2px; width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.expand-enter-active, .expand-leave-active { transition: all 0.4s ease-in-out; max-height: 1000px; }
+.expand-enter-from, .expand-leave-to { opacity: 0; max-height: 0; }
+.fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+.animate-in { animation: zoom-in 0.3s ease-out forwards; }
+@keyframes zoom-in { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+</style>
