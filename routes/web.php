@@ -3,6 +3,7 @@
 use App\Http\Controllers\Settings\ConfiguracionController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Produccion\ProduccionController;
+use App\Http\Controllers\Settings\ColorController;
 use App\Http\Controllers\Settings\MaquinaController;
 use App\Http\Controllers\Settings\MateriaPrimaController;
 use App\Http\Controllers\Settings\ParadaSettingsController;
@@ -97,6 +98,7 @@ Route::middleware(['auth'])->group(function () {
         Route::resource('pnc', PncSettingsController::class);
         Route::resource('paradas', ParadaSettingsController::class);
         Route::resource('materiaprima', MateriaPrimaController::class);
+        Route::resource('colores', ColorController::class);
 
         /** * GESTIÓN UNIFICADA DE SEGURIDAD (Solo ADMIN)
          */

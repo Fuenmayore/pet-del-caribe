@@ -29,7 +29,7 @@ class UserController extends Controller
             'codigo_empleado' => 'required|string|max:50|unique:users,codigo_empleado',
             'email'           => 'required|string|email|max:255|unique:users',
             'password'        => ['required', 'confirmed', Rules\Password::defaults()],
-            'rol'             => 'required|exists:roles,name',
+            'rol'             => 'required|exists:roles,name', // Validamos que el nombre del rol exista
         ]);
 
         $user = User::create([
@@ -40,7 +40,7 @@ class UserController extends Controller
             'activo'          => true,
         ]);
 
-        // Asignación inicial
+        // Asignación de rol vía Spatie
         $user->assignRole($request->rol);
 
         return back()->with('message', 'Usuario creado exitosamente.');
@@ -70,35 +70,26 @@ class UserController extends Controller
             $usuario->update(['password' => Hash::make($request->password)]);
         }
 
-        // 3. ACTUALIZACIÓN DEL ROL (Clave del éxito)
-        // syncRoles elimina todos los anteriores y deja solo el que viene del formulario
-        $usuario->syncRoles($request->rol);
+        // 3. Sincronizar Rol (Elimina el viejo, pone el nuevo)
+        $usuario->syncRoles([$request->rol]);
 
         return back()->with('message', 'Usuario actualizado correctamente.');
     }
 
-    /**
-     * Eliminar Usuario (resource destroy)
-     */
     public function destroy(User $usuario)
     {
         if ($usuario->id === auth()->id()) {
             return back()->with('error', 'No puedes eliminar tu propio usuario.');
         }
-
         $usuario->delete();
         return back()->with('message', 'Usuario eliminado correctamente.');
     }
 
-    /**
-     * Eliminar Rol (método manual destroyRole)
-     */
     public function destroyRole(Role $role)
     {
-        if ($role->name === 'ADMINISTRADOR') {
+        if ($role->name === 'Admin') {
             return back()->with('error', 'No se puede eliminar el rol principal.');
         }
-
         $role->delete();
         return back()->with('message', 'Rol eliminado correctamente.');
     }

@@ -45,11 +45,7 @@ watch(() => userForm.codigo_empleado, (newCodigo) => {
     if (!editModeUser.value) {
         if (newCodigo && newCodigo.length > 0) {
             // Limpiamos el código (minúsculas y sin espacios)
-            const cleanCode = newCodigo
-                .toLowerCase()
-                .trim()
-                .replace(/\s+/g, ''); 
-            
+            const cleanCode = newCodigo.toLowerCase().trim().replace(/\s+/g, ''); 
             userForm.email = `${cleanCode}@petcaribe.com`;
         } else {
             userForm.email = '';
@@ -65,6 +61,7 @@ const openUserModal = (user = null) => {
         userForm.nombre = user.nombre;
         userForm.codigo_empleado = user.codigo_empleado;
         userForm.email = user.email;
+        // Asignación segura del rol
         userForm.rol = user.roles && user.roles.length > 0 ? user.roles[0].name : '';
         userForm.activo = Boolean(user.activo);
         userForm.password = '';
@@ -74,6 +71,7 @@ const openUserModal = (user = null) => {
         userForm.reset(); 
         userForm.id = null;
         userForm.activo = true;
+        userForm.rol = ''; // Limpiar rol por defecto
     }
     userModal.value = true;
 };
@@ -86,7 +84,8 @@ const submitUser = () => {
         onSuccess: () => {
             userModal.value = false;
             userForm.reset();
-        }
+        },
+        preserveScroll: true
     });
 };
 
@@ -115,7 +114,8 @@ const openRoleModal = (role = null) => {
 
 const submitRole = () => {
     roleForm.post(route('settings.roles.save'), { 
-        onSuccess: () => roleModal.value = false 
+        onSuccess: () => roleModal.value = false,
+        preserveScroll: true
     });
 };
 
@@ -254,61 +254,65 @@ const deleteRole = (role) => {
                     <button @click="userModal = false" class="h-10 w-10 bg-white border border-slate-100 text-slate-300 hover:text-red-500 rounded-full flex items-center justify-center transition-all shadow-sm">✕</button>
                 </div>
 
-                <form @submit.prevent="submitUser" class="p-8 grid grid-cols-2 gap-5">
-                    <div class="col-span-2">
-                        <label class="label-form">Nombre del Usuario</label>
-                        <input v-model="userForm.nombre" type="text" class="input-form uppercase shadow-inner" placeholder="PEDRO PEREZ">
-                        <div v-if="userForm.errors.nombre" class="error-msg">{{ userForm.errors.nombre }}</div>
-                    </div>
-                    
-                    <div>
-                        <label class="label-form">Cédula Empleado</label>
-                        <input v-model="userForm.codigo_empleado" type="text" class="input-form font-mono shadow-inner uppercase" placeholder="ID-000">
-                        <div v-if="userForm.errors.codigo_empleado" class="error-msg">{{ userForm.errors.codigo_empleado }}</div>
-                    </div>
-
-                    <div>
-                        <label class="label-form">Perfil de Sistema</label>
-                        <select v-model="userForm.rol" class="input-form appearance-none cursor-pointer shadow-inner">
-                            <option value="" disabled>ELEGIR...</option>
-                            <option v-for="r in roles" :key="r.id" :value="r.name">{{ r.name }}</option>
-                        </select>
-                        <div v-if="userForm.errors.rol" class="error-msg">{{ userForm.errors.rol }}</div>
-                    </div>
-
-                    <div class="col-span-2">
-                        <label class="label-form">Email Institucional</label>
-                        <input v-model="userForm.email" type="email" class="input-form shadow-inner lowercase" placeholder="usuario@empresa.com">
-                        <div v-if="userForm.errors.email" class="error-msg">{{ userForm.errors.email }}</div>
-                    </div>
-
-                    <div>
-                        <label class="label-form">Contraseña</label>
-                        <input v-model="userForm.password" type="password" class="input-form shadow-inner" placeholder="••••">
-                        <div v-if="userForm.errors.password" class="error-msg">{{ userForm.errors.password }}</div>
-                    </div>
-                    <div>
-                        <label class="label-form">Reconfirmar</label>
-                        <input v-model="userForm.password_confirmation" type="password" class="input-form shadow-inner" placeholder="••••">
-                    </div>
-
-                    <div class="col-span-2 bg-slate-50 p-5 rounded-2xl border border-slate-100 flex items-center justify-between mt-2">
-                        <div>
-                            <p class="text-[10px] font-black text-slate-700 uppercase tracking-widest">Estatus de Acceso</p>
-                            <p class="text-[8px] font-bold text-slate-400 uppercase">Habilitar o restringir entrada</p>
+                <!-- CORRECCIÓN CLAVE: Envolvimos TODO dentro del <form> -->
+                <form @submit.prevent="submitUser">
+                    <div class="p-8 grid grid-cols-2 gap-5">
+                        <div class="col-span-2">
+                            <label class="label-form">Nombre del Usuario</label>
+                            <input v-model="userForm.nombre" type="text" class="input-form uppercase shadow-inner" placeholder="PEDRO PEREZ">
+                            <div v-if="userForm.errors.nombre" class="error-msg">{{ userForm.errors.nombre }}</div>
                         </div>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" v-model="userForm.activo" class="sr-only peer">
-                            <div class="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-blue-600 transition-all after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 peer-checked:after:translate-x-full shadow-inner"></div>
-                        </label>
-                    </div>
+                        
+                        <div>
+                            <label class="label-form">Cédula Empleado</label>
+                            <input v-model="userForm.codigo_empleado" type="text" class="input-form font-mono shadow-inner uppercase" placeholder="ID-000">
+                            <div v-if="userForm.errors.codigo_empleado" class="error-msg">{{ userForm.errors.codigo_empleado }}</div>
+                        </div>
 
-                    <div class="col-span-2 flex gap-3 mt-6">
-                        <button type="button" @click="userModal = false" class="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-xs uppercase hover:bg-slate-200">Descartar</button>
-                        <button type="submit" :disabled="userForm.processing" class="flex-[2] py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-blue-600 transition-all flex items-center justify-center gap-3">
-                            <span v-if="userForm.processing" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                            {{ editModeUser ? 'Actualizar Datos' : 'Confirmar Registro 🚀' }}
-                        </button>
+                        <div>
+                            <label class="label-form">Perfil de Sistema</label>
+                            <select v-model="userForm.rol" class="input-form appearance-none cursor-pointer shadow-inner">
+                                <option value="" disabled>ELEGIR...</option>
+                                <option v-for="r in roles" :key="r.id" :value="r.name">{{ r.name }}</option>
+                            </select>
+                            <div v-if="userForm.errors.rol" class="error-msg">{{ userForm.errors.rol }}</div>
+                        </div>
+
+                        <div class="col-span-2">
+                            <label class="label-form">Email Institucional</label>
+                            <input v-model="userForm.email" type="email" class="input-form shadow-inner lowercase" placeholder="usuario@empresa.com">
+                            <div v-if="userForm.errors.email" class="error-msg">{{ userForm.errors.email }}</div>
+                        </div>
+
+                        <div>
+                            <label class="label-form">Contraseña</label>
+                            <input v-model="userForm.password" type="password" class="input-form shadow-inner" placeholder="••••">
+                            <div v-if="userForm.errors.password" class="error-msg">{{ userForm.errors.password }}</div>
+                        </div>
+                        <div>
+                            <label class="label-form">Reconfirmar</label>
+                            <input v-model="userForm.password_confirmation" type="password" class="input-form shadow-inner" placeholder="••••">
+                        </div>
+
+                        <div class="col-span-2 bg-slate-50 p-5 rounded-2xl border border-slate-100 flex items-center justify-between mt-2">
+                            <div>
+                                <p class="text-[10px] font-black text-slate-700 uppercase tracking-widest">Estatus de Acceso</p>
+                                <p class="text-[8px] font-bold text-slate-400 uppercase">Habilitar o restringir entrada</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="userForm.activo" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-blue-600 transition-all after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 peer-checked:after:translate-x-full shadow-inner"></div>
+                            </label>
+                        </div>
+
+                        <!-- ESTOS BOTONES AHORA ESTÁN DENTRO DEL <form> -->
+                        <div class="col-span-2 flex gap-3 mt-6">
+                            <button type="button" @click="userModal = false" class="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-xs uppercase hover:bg-slate-200 transition-colors">Descartar</button>
+                            <button type="submit" :disabled="userForm.processing" class="flex-[2] py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-blue-600 transition-all flex items-center justify-center gap-3">
+                                <span v-if="userForm.processing" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                                {{ editModeUser ? 'Actualizar Datos' : 'Confirmar Registro 🚀' }}
+                            </button>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -333,7 +337,7 @@ const deleteRole = (role) => {
                     </div>
                 </div>
                 <div class="p-8 border-t border-slate-50 flex gap-4 bg-slate-50/30">
-                    <button @click="roleModal = false" class="flex-1 py-4 bg-slate-100 text-slate-400 rounded-2xl font-black text-xs uppercase hover:bg-slate-200">Cancelar</button>
+                    <button @click="roleModal = false" class="flex-1 py-4 bg-slate-100 text-slate-400 rounded-2xl font-black text-xs uppercase hover:bg-slate-200 transition-colors">Cancelar</button>
                     <button @click="submitRole" :disabled="roleForm.processing" class="flex-[2] py-4 bg-purple-600 text-white rounded-2xl font-black text-xs uppercase shadow-xl shadow-purple-100 hover:bg-purple-700 transition-all">Guardar Configuración</button>
                 </div>
             </div>

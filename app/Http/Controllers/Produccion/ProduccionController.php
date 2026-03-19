@@ -11,8 +11,10 @@ use App\Models\AnomaliaProduccion;
 // --- NUEVOS MODELOS PARA CATÁLOGOS DINÁMICOS ---
 use App\Models\PerfilOperacion;
 use App\Models\MateriaPrima;
+use App\Models\Color; // <--- 1. AGREGAMOS EL MODELO COLOR AQUÍ
 use App\Models\PncCatalogo;
 use App\Models\ParadaCatalogo;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
@@ -47,7 +49,10 @@ class ProduccionController extends Controller
 
     public function config(Maquina $maquina)
     {
-        return Inertia::render('Produccion/Inyeccion/Config', ['maquina' => $maquina]);
+        return Inertia::render('Produccion/Inyeccion/Config', [
+            'maquina' => $maquina,
+            'supervisores' => User::role('Supervisor')->orderBy('nombre')->get(['id', 'nombre']),
+        ]);
     }
 
     public function store(Request $request)
@@ -99,11 +104,11 @@ class ProduccionController extends Controller
 
         return Inertia::render('Produccion/Inyeccion/RegistroHorario', [
             'turno' => $turno,
-            // 2. ENVÍALO A LA VISTA AQUÍ:
             'perfilesGuardados' => $perfilesGuardados,
 
             'productos' => Producto::where('area', 'LIKE', '%INYECCIÓN%')->orderBy('descripcion')->get(['id', 'item', 'descripcion', 'ciclo', 'cavidades']),
             'materiales' => MateriaPrima::orderBy('nombre')->get(),
+            'colores' => Color::where('activo', true)->orderBy('nombre')->get(), // <--- 2. MANDAMOS LOS COLORES A LA VISTA (Solo los activos)
             'pncCatalogo' => PncCatalogo::whereIn('area', ['Inyección', 'Ambos'])->orderBy('nombre')->get(),
             'paradasCatalogo' => ParadaCatalogo::orderBy('codigo')->get(),
             'anomalias' => AnomaliaProduccion::all(),
@@ -153,28 +158,26 @@ class ProduccionController extends Controller
             'hora'            => 'required|string',
             'unidades_buenas' => 'required|integer|min:0',
             'num_vale'        => 'nullable|string',
-            'pnc'             => 'nullable|array'
+            'pnc'             => 'nullable|array' // <--- Recibe todo el paquete JSON
         ]);
 
         // Sincronización blindada
         ProduccionHoraria::updateOrCreate(
             [
-                // Buscamos por el UUID si existe
                 'id' => $validated['id'] ?? null,
             ],
             [
-                // Todos estos campos se insertarán si el ID no existe 
-                // o se actualizarán si el ID ya existe.
                 'config_id'          => $validated['config_id'],
-                'hora'               => $validated['hora'], // <--- ESTO ES LO QUE FALTABA
+                'hora'               => $validated['hora'],
                 'unidades_buenas'    => $validated['unidades_buenas'],
                 'num_vale_inyectora' => $validated['num_vale'],
-                'pnc_detalle'        => $validated['pnc'] ?? []
+                'pnc_detalle'        => $validated['pnc'] ?? [] // <--- Guarda las cavidades anuladas aquí dentro
             ]
         );
 
         return back()->with('message', 'Registro de las ' . $validated['hora'] . ' sincronizado correctamente.');
     }
+    
     public function finalizar(Turno $turno)
     {
         $turno->update(['estado' => 'Cerrado']);
@@ -188,7 +191,6 @@ class ProduccionController extends Controller
             'operario',
             'configuraciones.producto',
             'configuraciones.horasProduccion',
-            // Agregamos .registrador al final de esta línea 👇
             'configuraciones.perfilesOperacion.registrador' // <--- ¡Este último punto es vital!
         ]);
 
@@ -214,7 +216,6 @@ class ProduccionController extends Controller
         return redirect()->route('produccion.index')->with('message', 'Turno cancelado con éxito');
     }
 
-    // Agrega este método justo arriba de tu guardarPerfil
     public function crearPerfil(Turno $turno)
     {
         $turno->load(['maquina', 'configActiva.producto']);
@@ -235,8 +236,6 @@ class ProduccionController extends Controller
         ]);
     }
 
-
-    // 2. Agrega este método al final de tu controlador (antes de la última llave '}')
     public function guardarPerfil(Request $request, Turno $turno)
     {
         $validated = $request->validate([

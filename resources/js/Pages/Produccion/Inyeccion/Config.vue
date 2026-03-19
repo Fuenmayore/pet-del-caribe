@@ -5,6 +5,7 @@ import { ref, computed } from 'vue';
 
 const props = defineProps({ 
     maquina: Object,
+    supervisores: Array, // <-- Nueva propiedad que recibe la BD
 });
 
 const user = usePage().props.auth.user;
@@ -18,9 +19,9 @@ const form = useForm({
     maquina_id: props.maquina.id,
     fecha: new Date().toISOString().substr(0, 10),
     turno: '',
-    duracion_turno: 8, // Valor por defecto 8
+    duracion_turno: 8, 
     cod_operario: user.nombre, 
-    supervisor: '',
+    supervisor: '', // Guardará el nombre del supervisor seleccionado
     area: props.maquina.sub_area, 
     
     producto_id: null, 
@@ -33,17 +34,19 @@ const submit = () => {
     form.post(route('produccion.store'));
 };
 
+// Se ajustó ligeramente la clase base para que los <select> luzcan idénticos a los <input>
 const inputClass = (hasError) => {
-    const baseClass = "w-full h-12 border-2 rounded-xl text-sm font-bold transition-all focus:ring-0";
+    const baseClass = "w-full h-12 px-4 border-2 rounded-xl text-sm font-bold transition-all focus:ring-0 appearance-none bg-no-repeat bg-[position:right_1rem_center] bg-[length:1.2em_1.2em]";
+    const iconNormal = `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`;
+    
     return hasError 
-        ? `${baseClass} border-red-500 bg-red-50 focus:border-red-600` 
-        : `${baseClass} border-gray-200 bg-gray-50 focus:border-pet-blue`;
+        ? `${baseClass} border-red-500 bg-red-50 focus:border-red-600 text-red-900` 
+        : `${baseClass} border-gray-200 bg-gray-50 focus:border-pet-blue text-gray-700`;
 };
 
-// Lógica para el switch
 const toggleJornada = (val) => {
     form.duracion_turno = val ? 12 : 8;
-    form.turno = ''; // Reiniciamos el turno al cambiar jornada
+    form.turno = ''; 
 };
 </script>
 
@@ -105,9 +108,9 @@ const toggleJornada = (val) => {
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div class="space-y-1">
+                        <div class="space-y-1 relative">
                             <label class="text-xs font-bold text-gray-500 ml-1">Seleccionar Turno *</label>
-                            <select v-model="form.turno" :class="inputClass(form.errors.turno)">
+                            <select v-model="form.turno" :class="inputClass(form.errors.turno)" style="background-image: url('data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'M6 8l4 4 4-4\'/%3e%3c/svg%3e');">
                                 <option value="" disabled>Seleccione...</option>
                                 <template v-if="form.duracion_turno === 8">
                                     <option value="1">Turno 1 (Mañana)</option>
@@ -125,16 +128,22 @@ const toggleJornada = (val) => {
                         <div class="space-y-1">
                             <label class="text-xs font-bold text-gray-500 ml-1">Nombre Operario</label>
                             <input type="text" :value="user.nombre" disabled 
-                                class="w-full h-12 bg-gray-100 border-none rounded-xl text-sm font-bold text-gray-400 uppercase">
+                                class="w-full h-12 px-4 bg-gray-100 border-none rounded-xl text-sm font-bold text-gray-400 uppercase">
                         </div>
                     </div>
 
-                    <div class="space-y-1">
+                    <!-- CAMBIO PRINCIPAL: Select de Supervisor conectado a la BD -->
+                    <div class="space-y-1 relative">
                         <label class="text-xs font-bold text-gray-500 ml-1">Nombre del Supervisor *</label>
-                        <input type="text" v-model="form.supervisor" 
+                        <select v-model="form.supervisor" 
                             :class="inputClass(form.errors.supervisor)"
-                            placeholder="Ingrese nombre del supervisor" 
+                            style="background-image: url('data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'M6 8l4 4 4-4\'/%3e%3c/svg%3e');"
                         >
+                            <option value="" disabled>Seleccione al supervisor en turno...</option>
+                            <option v-for="sup in supervisores" :key="sup.id" :value="sup.nombre">
+                                {{ sup.nombre }}
+                            </option>
+                        </select>
                         <p v-if="form.errors.supervisor" class="text-red-500 text-[10px] font-bold mt-1 ml-1 uppercase">{{ form.errors.supervisor }}</p>
                     </div>
 

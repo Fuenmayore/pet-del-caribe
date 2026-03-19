@@ -8,6 +8,7 @@ const props = defineProps({
     productos: Array, 
     anomalias: Array,
     materiales: Array,
+    colores: Array, 
     pncCatalogo: Array,
     paradasCatalogo: Array,
     perfilesGuardados: Array 
@@ -15,17 +16,10 @@ const props = defineProps({
 
 const page = usePage();
 
-// --- LÓGICA DE PERMISOS: ¿Puede este usuario modificar esta fila? ---
 const canEditRow = (reg) => {
-    // NUEVA REGLA: Si el turno está cerrado, desaparecen los botones de edición/sync para todos
-    if (props.turno.estado !== 'Abierto') {
-        return false;
-    }
-
+    if (props.turno.estado !== 'Abierto') return false;
     const perms = page.props.auth.user.permissions || [];
-    if (reg.guardado) {
-        return perms.includes('registro_horario.editar');
-    }
+    if (reg.guardado) return perms.includes('registro_horario.editar');
     return perms.includes('registro_horario.crear');
 };
 
@@ -35,40 +29,29 @@ const finalizarTurno = () => {
     }
 };
 
-// --- KPIs GARANTIZADOS (Siempre calcula si hay datos) ---
 const kpisCalculados = computed(() => {
-    let totalBuenas = 0;
-    let totalScrapKg = 0;
-    let totalMinutosParo = 0;
-    let metaTotalAcumulada = 0;
+    let totalBuenas = 0, totalScrapKg = 0, totalMinutosParo = 0, metaTotalAcumulada = 0;
 
     registros.value.forEach(reg => {
         if (reg.guardado || reg.buenas > 0 || reg.pnc.length > 0 || reg.paros.length > 0) {
-            
             totalBuenas += (parseInt(reg.buenas) || 0);
 
             if (reg.pnc && reg.pnc.length > 0) {
                 reg.pnc.forEach(p => {
-                    totalScrapKg += (parseFloat(p.malas_kg) || 0) + 
-                                    (parseFloat(p.cont_kg) || 0) + 
-                                    (parseFloat(p.torta_kg) || 0);
+                    totalScrapKg += (parseFloat(p.malas_kg) || 0) + (parseFloat(p.cont_kg) || 0) + (parseFloat(p.torta_kg) || 0);
                 });
             }
 
             if (reg.paros && reg.paros.length > 0) {
-                reg.paros.forEach(p => {
-                    totalMinutosParo += (parseInt(p.minutos) || 0);
-                });
+                reg.paros.forEach(p => totalMinutosParo += (parseInt(p.minutos) || 0));
             }
 
             const config = props.turno.configuraciones?.find(c => c.id === reg.config_id) || props.turno.config_activa;
-            
             const cicloAUsar = parseFloat(config?.producto?.ciclo) || parseFloat(reg.ciclo) || 0;
             const cavidadesAUsar = parseInt(config?.producto?.cavidades) || parseInt(reg.cav) || 0;
 
             if (cicloAUsar > 0 && cavidadesAUsar > 0) {
-                const metaHora = (3600 / cicloAUsar) * cavidadesAUsar;
-                metaTotalAcumulada += metaHora;
+                metaTotalAcumulada += (3600 / cicloAUsar) * cavidadesAUsar;
             }
         }
     });
@@ -92,13 +75,49 @@ const indexActivo = ref(null);
 
 const catalogoFallas = computed(() => props.paradasCatalogo);
 const listaDefectosCalidad = computed(() => props.pncCatalogo);
-
-const perfilesGuardadosCount = computed(() => {
-    return props.perfilesGuardados ? props.perfilesGuardados.length : 0;
-});
+const perfilesGuardadosCount = computed(() => props.perfilesGuardados ? props.perfilesGuardados.length : 0);
 
 const modalInspeccion = ref(false);
 const cavidadSeleccionada = ref(null);
+
+const faseSeleccionadaManual = ref(null);
+const faseAMostrar = computed(() => faseSeleccionadaManual.value ?? props.turno.config_activa);
+const esFaseActiva = computed(() => faseAMostrar.value?.id === props.turno.config_activa?.id);
+
+const errorBaseDatos = computed(() => {
+    if (!faseAMostrar.value || !faseAMostrar.value.producto) return false;
+    const ciclo = parseFloat(faseAMostrar.value.producto.ciclo) || 0;
+    const cavidades = parseInt(faseAMostrar.value.producto.cavidades) || 0;
+    
+    if (ciclo <= 0 || cavidades <= 0) {
+        return true;
+    }
+    return false;
+});
+
+const getCavidadesEstandar = (index) => {
+    if (index === null) return 0;
+    const reg = registros.value[index];
+    const config = props.turno.configuraciones?.find(c => c.id === reg.config_id) || props.turno.config_activa;
+    return parseInt(config?.producto?.cavidades) || 0;
+};
+
+const esAnulada = (n) => {
+    const i = registros.value[indexActivo.value]?.inspeccion.find(i => i.cav === n);
+    return i && i.defecto === 'ANULADA';
+};
+
+const tieneDefecto = (n) => {
+    const i = registros.value[indexActivo.value]?.inspeccion.find(i => i.cav === n);
+    return i && i.defecto !== 'ANULADA';
+};
+
+const getNombreDefecto = (n) => {
+    const i = registros.value[indexActivo.value]?.inspeccion.find(i => i.cav === n);
+    if (!i) return '';
+    const def = props.pncCatalogo.find(p => p.id === i.defecto);
+    return def ? def.nombre.substring(0, 5) : '...';
+};
 
 const calcularDiferenciaMinutos = (inicio, fin) => {
     if (!inicio || !fin) return 0;
@@ -110,16 +129,8 @@ const calcularDiferenciaMinutos = (inicio, fin) => {
     return totalFin - totalInicio;
 };
 
-const faseSeleccionadaManual = ref(null);
-const faseAMostrar = computed(() => faseSeleccionadaManual.value ?? props.turno.config_activa);
-const esFaseActiva = computed(() => faseAMostrar.value?.id === props.turno.config_activa?.id);
-
 watch(() => props.turno.config_activa, () => { faseSeleccionadaManual.value = null; }, { deep: true });
-
-const seleccionarFase = (fase) => {
-    faseSeleccionadaManual.value = fase;
-    editandoConfig.value = false;
-};
+const seleccionarFase = (fase) => { faseSeleccionadaManual.value = fase; editandoConfig.value = false; };
 
 const generarLoteSugerido = () => {
     const f = new Date();
@@ -127,26 +138,17 @@ const generarLoteSugerido = () => {
     const mm = String(f.getMonth() + 1).padStart(2, '0');
     const dd = String(f.getDate()).padStart(2, '0');
     const t = props.turno.numero_turno;
-    const m = props.turno.maquina.nombre;
+    const m = props.turno.maquina.abreviacion;
     return `${yy}${mm}${dd}T${t}${m}`.replace(/\s+/g, '').toUpperCase();
 };
 
 const generarHorasPorTurno = (numeroTurno, duracion = 8) => {
-    let horaInicio = 7;
-    if (duracion == 12) {
-        horaInicio = (numeroTurno == 1) ? 7 : 19;
-    } else {
-        horaInicio = (numeroTurno == 1) ? 7 : (numeroTurno == 2 ? 15 : 23);
-    }
+    let horaInicio = (duracion == 12) ? ((numeroTurno == 1) ? 7 : 19) : ((numeroTurno == 1) ? 7 : (numeroTurno == 2 ? 15 : 23));
     return Array.from({ length: duracion }, (_, i) => ({
-        id: null, 
-        hora: `${String((horaInicio + i) % 24).padStart(2, '0')}:00`,
-        num_vale: '', ciclo: '', buenas: '', cav: '', 
-        pnc: [], paros: [], 
-        inspeccion: [], 
-        inspeccion_completada: false, 
-        procesando: false, guardado: false,
-        modificado: false, 
+        id: null, hora: `${String((horaInicio + i) % 24).padStart(2, '0')}:00`,
+        num_vale: '', num_tula: '', ciclo: '', buenas: '', cav: '', cavidades_anuladas: 0, // <-- AGREGADA TULA
+        pnc: [], paros: [], inspeccion: [], 
+        inspeccion_completada: false, procesando: false, guardado: false, modificado: false, 
         referencia_nombre: null, config_id: null
     }));
 };
@@ -157,9 +159,18 @@ const calcularBuenasAutomatico = (index) => {
     const reg = registros.value[index];
     const ciclo = parseFloat(reg.ciclo);
     const cav = parseInt(reg.cav);
-    if (ciclo > 0 && cav > 0) {
+    
+    if (ciclo > 0 && cav >= 0) {
         reg.buenas = Math.floor((3600 / ciclo) * cav);
     }
+};
+
+const alCambiarCavidadesManual = (index) => {
+    const reg = registros.value[index];
+    const estandar = getCavidadesEstandar(index);
+    reg.cavidades_anuladas = Math.max(0, estandar - parseInt(reg.cav || 0));
+    calcularBuenasAutomatico(index);
+    reg.modificado = true;
 };
 
 const cargarDatosExistentes = () => {
@@ -172,9 +183,13 @@ const cargarDatosExistentes = () => {
                     if (fila && !fila.modificado) {
                         fila.id = dbHora.id; 
                         fila.num_vale = dbHora.num_vale_inyectora;
+                        fila.num_tula = dbHora.pnc_detalle?.num_tula || ''; // <-- RECUPERA LA TULA
                         fila.buenas = dbHora.unidades_buenas;
                         if(dbHora.pnc_detalle?.ciclo_real) fila.ciclo = dbHora.pnc_detalle.ciclo_real;
                         if(dbHora.pnc_detalle?.cavidades_reales) fila.cav = dbHora.pnc_detalle.cavidades_reales;
+                        
+                        fila.cavidades_anuladas = dbHora.cavidades_anuladas || dbHora.pnc_detalle?.cavidades_anuladas || 0;
+
                         fila.pnc = dbHora.pnc_detalle?.defectos || [];
                         fila.paros = dbHora.pnc_detalle?.paros || [];
                         fila.inspeccion = dbHora.pnc_detalle?.inspeccion || [];
@@ -199,9 +214,7 @@ onMounted(() => {
         const estaOcupado = registros.value.some(r => r.procesando) || editandoConfig.value || modalPnc.value || modalParo.value || modalInspeccion.value;
         if (!estaOcupado) {
             router.reload({ 
-                only: ['turno', 'perfilesGuardados'], 
-                preserveScroll: true, 
-                preserveState: true,
+                only: ['turno', 'perfilesGuardados'], preserveScroll: true, preserveState: true,
                 onSuccess: () => cargarDatosExistentes() 
             });
         }
@@ -214,28 +227,22 @@ const editandoConfig = ref(!props.turno.config_activa);
 const isEditingExisting = ref(false);
 
 const configForm = useForm({
-    config_id: null,
-    producto_id: null,
-    referencia_nombre: '',
+    config_id: null, producto_id: null, referencia_nombre: '',
     color: props.turno.config_activa?.mezcla_materiales?.color || '',
     mezcla: props.turno.config_activa?.mezcla_materiales?.materiales || [{ materia_prima_id: '', porcentaje: '' }],
 });
 
 const prepararEdicionFase = (fase) => {
     isEditingExisting.value = true;
-    configForm.config_id = fase.id;
-    configForm.producto_id = fase.producto_id;
-    configForm.referencia_nombre = fase.producto?.descripcion;
-    configForm.color = fase.mezcla_materiales?.color || '';
+    configForm.config_id = fase.id; configForm.producto_id = fase.producto_id;
+    configForm.referencia_nombre = fase.producto?.descripcion; configForm.color = fase.mezcla_materiales?.color || '';
     configForm.mezcla = fase.mezcla_materiales?.materiales || [{ materia_prima_id: '', porcentaje: '' }];
     editandoConfig.value = true;
 };
 
 const prepararNuevoMolde = () => {
-    isEditingExisting.value = false;
-    configForm.reset();
-    configForm.config_id = null;
-    configForm.mezcla = [{ materia_prima_id: '', porcentaje: '' }];
+    isEditingExisting.value = false; configForm.reset();
+    configForm.config_id = null; configForm.mezcla = [{ materia_prima_id: '', porcentaje: '' }];
     editandoConfig.value = true;
 };
 
@@ -244,17 +251,12 @@ const quitarFilaMaterial = (index) => configForm.mezcla.length > 1 && configForm
 
 const guardarConfig = () => {
     if (totalMezcla.value !== 100) return alert("La mezcla debe sumar exactamente 100%");
-    configForm.post(route('produccion.configurar', props.turno.id), {
-        onSuccess: () => { 
-            editandoConfig.value = false; 
-            cargarDatosExistentes();
-        }
-    });
+    configForm.post(route('produccion.configurar', props.turno.id), { onSuccess: () => { editandoConfig.value = false; cargarDatosExistentes(); } });
 };
 
 const abrirPnc = (index) => { 
     indexActivo.value = index; 
-    registros.value[index].modificado = true;
+    registros.value[index].modificado = true; 
     modalPnc.value = true; 
 };
 const agregarDefecto = () => { 
@@ -271,19 +273,27 @@ const agregarParo = () => {
 };
 
 const abrirInspeccion = (index) => { 
-    const fila = registros.value[index];
-    if (!fila.cav || fila.cav <= 0) {
-        alert("⚠️ POR FAVOR, INDIQUE LA CANTIDAD EN 'CAV. REALES' ANTES DE INICIAR LA INSPECCIÓN DE PREFORMAS.");
+    const estandar = getCavidadesEstandar(index);
+    
+    if (estandar <= 0) {
+        alert("⚠️ ERROR CRÍTICO: El producto asignado no tiene la cantidad de 'Cavidades' registrada en la Base de Datos. Llame al supervisor, no se puede realizar la inspección.");
         return;
     }
+
     indexActivo.value = index; 
-    fila.modificado = true; 
+    registros.value[index].modificado = true; 
+    
+    if(!registros.value[index].cav && estandar > 0) {
+        registros.value[index].cav = estandar;
+    }
+    
     modalInspeccion.value = true; 
 };
 
 const asignarDefectoACavidad = (defectoId) => {
     const fila = registros.value[indexActivo.value];
     const index = fila.inspeccion.findIndex(i => i.cav === cavidadSeleccionada.value);
+    
     if (defectoId === null) {
         if (index !== -1) fila.inspeccion.splice(index, 1);
     } else {
@@ -293,16 +303,27 @@ const asignarDefectoACavidad = (defectoId) => {
             fila.inspeccion.push({ cav: cavidadSeleccionada.value, defecto: defectoId });
         }
     }
+
+    const estandar = getCavidadesEstandar(indexActivo.value);
+    fila.cavidades_anuladas = fila.inspeccion.filter(i => i.defecto === 'ANULADA').length;
+    fila.cav = estandar - fila.cavidades_anuladas;
+    
+    calcularBuenasAutomatico(indexActivo.value);
     cavidadSeleccionada.value = null;
 };
 
 const finalizarInspeccion = () => {
     const index = indexActivo.value;
-    registros.value[index].inspeccion_completada = true;
-    modalInspeccion.value = false;
-    if (canEditRow(registros.value[index])) {
-        syncHora(index); 
+    const fila = registros.value[index];
+
+    if (!fila.buenas || fila.buenas === '') {
+        calcularBuenasAutomatico(index);
     }
+
+    fila.inspeccion_completada = true;
+    modalInspeccion.value = false;
+    
+    if (canEditRow(fila)) { syncHora(index); }
 };
 
 const actualizarCategoriaParo = (p) => {
@@ -314,7 +335,12 @@ const syncHora = (index) => {
     const fila = registros.value[index];
     if (!fila.inspeccion_completada) {
         alert("⚠️ DEBE REALIZAR LA INSPECCIÓN DE PREFORMAS ANTES DE GUARDAR.");
-        abrirInspeccion(index);
+        abrirInspeccion(index); return;
+    }
+
+    // <-- CANDADO: EXIGE TULA OBLIGATORIA
+    if (!fila.num_tula || String(fila.num_tula).trim() === '') {
+        alert("⚠️ EL NÚMERO DE TULA ES OBLIGATORIO. Por favor ingresa el número de tula antes de sincronizar.");
         return;
     }
     
@@ -322,30 +348,41 @@ const syncHora = (index) => {
     if (!configIdDestino) return alert("Guarde la configuración primero");
 
     fila.procesando = true;
-    router.post(route('produccion.guardarHora'), {
-        id: fila.id, // Se manda el UUID
-        config_id: configIdDestino, // Se envía la fase original
+
+    const payloadSeguro = {
+        id: fila.id, 
+        config_id: configIdDestino, 
         hora: fila.hora,
-        num_vale: fila.num_vale,
-        unidades_buenas: fila.buenas,
+        num_vale: fila.num_vale || '',
+        unidades_buenas: parseInt(fila.buenas) || 0,
+        cavidades_anuladas: parseInt(fila.cavidades_anuladas) || 0,
         pnc: { 
-            cavidades_reales: fila.cav, ciclo_real: fila.ciclo, 
-            defectos: fila.pnc, paros: fila.paros, 
-            inspeccion: fila.inspeccion, inspeccion_completada: true 
+            num_tula: String(fila.num_tula).trim(), // <-- SE GUARDA LA TULA EN EL JSON
+            cavidades_reales: parseInt(fila.cav) || getCavidadesEstandar(index), 
+            cavidades_anuladas: parseInt(fila.cavidades_anuladas) || 0, 
+            ciclo_real: parseFloat(fila.ciclo) || null, 
+            defectos: fila.pnc, 
+            paros: fila.paros, 
+            inspeccion: fila.inspeccion, 
+            inspeccion_completada: true 
         }
-    }, {
+    };
+
+    router.post(route('produccion.guardarHora'), payloadSeguro, {
         onSuccess: () => { 
             fila.procesando = false; 
-            fila.guardado = true;
+            fila.guardado = true; 
             fila.modificado = false; 
-            fila.config_id = configIdDestino; // Confirmar anclaje de fase local
-            
+            fila.config_id = configIdDestino;
             const faseAplicada = props.turno.configuraciones?.find(c => c.id === configIdDestino) || props.turno.config_activa;
             if (faseAplicada) fila.referencia_nombre = faseAplicada.producto?.descripcion;
-            
             cargarDatosExistentes(); 
         },
-        onError: () => fila.procesando = false
+        onError: (errores) => {
+            fila.procesando = false;
+            console.error(errores);
+            alert("❌ El servidor rechazó el guardado. Verifica los datos.");
+        }
     });
 };
 
@@ -355,16 +392,14 @@ const productosFiltrados = computed(() => {
     if (searchProd.value.length < 2) return [];
     return props.productos.filter(p => p.descripcion.toLowerCase().includes(searchProd.value.toLowerCase())).slice(0, 5);
 });
-const seleccionarProducto = (p) => {
-    configForm.producto_id = p.id;
-    configForm.referencia_nombre = p.descripcion;
-    searchProd.value = '';
-};
+const seleccionarProducto = (p) => { configForm.producto_id = p.id; configForm.referencia_nombre = p.descripcion; searchProd.value = ''; };
 
 const currentHourString = computed(() => `${String(new Date().getHours()).padStart(2, '0')}:00`);
+
 const clonarVale = (i) => { 
-    if (i < registros.value.length - 1) {
+    if (i < registros.value.length - 1) { 
         registros.value[i+1].num_vale = registros.value[i].num_vale; 
+        registros.value[i+1].num_tula = registros.value[i].num_tula; // <-- AHORA TAMBIÉN CLONA LA TULA
         registros.value[i+1].modificado = true; 
     }
 };
@@ -385,7 +420,6 @@ const clonarVale = (i) => {
                         <p class="text-[9px] font-bold text-pet-blue uppercase mt-0.5">{{ turno.maquina.nombre }}</p>
                     </div>
                 </div>
-
                 <div class="bg-slate-900 text-white px-4 py-1.5 rounded-lg border border-slate-800 flex items-center gap-2 shadow-sm">
                     <span v-if="turno.estado === 'Abierto'" class="w-1.5 h-1.5 rounded-full bg-pet-green animate-pulse"></span>
                     <span v-else class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
@@ -394,8 +428,7 @@ const clonarVale = (i) => {
             </div>
         </template>
 
-        <div class="max-w-7xl mx-auto p-3 md:p-6 space-y-6 pb-40">
-            
+        <div class="max-w-7xl mx-auto p-3 md:p-6 space-y-6 pb-40 relative">
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
                 <div class="bg-slate-900 p-4 md:p-5 rounded-2xl shadow-xl border border-slate-800 flex items-center justify-between group">
                     <div>
@@ -435,6 +468,14 @@ const clonarVale = (i) => {
                     <div class="h-10 w-10 md:h-12 md:w-12 rounded-xl bg-red-50 text-red-500 flex items-center justify-center">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     </div>
+                </div>
+            </div>
+
+            <div v-if="errorBaseDatos" class="bg-red-500 text-white p-4 rounded-2xl shadow-lg flex items-start gap-4 animate-in slide-in-from-top-4">
+                <svg class="w-8 h-8 shrink-0 mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                <div>
+                    <h4 class="font-black uppercase text-sm leading-tight">⚠️ Acción Requerida: Catálogo Incompleto</h4>
+                    <p class="text-[10px] font-bold mt-1">El producto <strong class="underline">{{ faseAMostrar.producto?.descripcion }}</strong> no tiene registrado el <strong>Ciclo Estándar</strong> o las <strong>Cavidades</strong> en el módulo de Productos. Sin estos datos no podrás registrar la inspección de preformas ni calcular el OEE. Pide al administrador que edite el producto.</p>
                 </div>
             </div>
 
@@ -490,47 +531,72 @@ const clonarVale = (i) => {
             </div>
 
             <transition name="expand">
-                <div v-if="editandoConfig" class="bg-white rounded-[2rem] shadow-2xl border border-slate-100 overflow-hidden mb-6 relative">
+                <div v-if="editandoConfig" class="bg-white rounded-[2rem] shadow-2xl border border-slate-100 mb-6 relative z-50">
                     <div class="flex justify-between items-center p-6 border-b border-slate-50">
                          <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                              {{ isEditingExisting ? 'Corregir Referencia de Fase' : 'Configuración de Producción' }}
                          </h3>
                          <button @click="editandoConfig = false" class="h-10 w-10 bg-slate-100 rounded-full flex items-center justify-center hover:bg-slate-200 text-slate-500 font-bold">✕</button>
                     </div>
+                    
                     <div class="grid grid-cols-1 lg:grid-cols-12">
-                        <div class="lg:col-span-6 p-6 md:p-8 border-b lg:border-b-0 lg:border-r border-slate-50">
+                        <div class="lg:col-span-6 p-6 md:p-8 border-b lg:border-b-0 lg:border-r border-slate-50 relative z-50">
                             <h3 class="text-[10px] font-black text-slate-800 uppercase mb-4 tracking-widest">1. Identificar Producto</h3>
+                            
                             <div v-if="!configForm.producto_id" class="relative">
-                                <input type="text" v-model="searchProd" class="w-full h-14 bg-slate-50 border-none rounded-xl font-black px-6 focus:ring-4 focus:ring-indigo-500/5 text-sm shadow-inner" placeholder="Buscar producto...">
+                                <input type="text" v-model="searchProd" class="w-full h-12 bg-slate-50 border-none rounded-xl font-black px-5 focus:ring-4 focus:ring-indigo-500/5 text-sm shadow-inner" placeholder="Buscar producto...">
                                 <div v-if="productosFiltrados.length" class="absolute z-50 w-full bg-white shadow-2xl rounded-xl mt-2 border overflow-hidden">
-                                    <div v-for="p in productosFiltrados" :key="p.id" @click="seleccionarProducto(p)" class="p-4 hover:bg-slate-50 cursor-pointer flex justify-between items-center group"><div class="font-black text-slate-800 text-xs uppercase">{{ p.descripcion }}</div><span class="text-[9px] font-black text-indigo-600">ELEGIR →</span></div>
+                                    <div v-for="p in productosFiltrados" :key="p.id" @click="seleccionarProducto(p)" class="p-4 hover:bg-slate-50 cursor-pointer flex justify-between items-center group">
+                                        <div class="font-black text-slate-800 text-xs uppercase">{{ p.descripcion }}</div>
+                                        <span class="text-[9px] font-black text-indigo-600">ELEGIR →</span>
+                                    </div>
                                 </div>
                             </div>
-                            <div v-else class="p-6 rounded-2xl bg-indigo-600 text-white flex justify-between items-center shadow-lg">
-                                <div class="truncate mr-2"><span class="text-[8px] font-black uppercase opacity-60 block mb-1">Elegido</span><h4 class="text-sm font-black uppercase truncate">{{ configForm.referencia_nombre }}</h4></div>
-                                <button @click="configForm.producto_id = null" class="h-8 w-8 bg-white/10 rounded-lg hover:bg-white/20 shrink-0">✕</button>
+                            
+                            <div v-else class="p-5 rounded-2xl bg-indigo-600 text-white flex justify-between items-center shadow-lg">
+                                <div class="truncate mr-2">
+                                    <span class="text-[8px] font-black uppercase opacity-60 block mb-1">Elegido</span>
+                                    <h4 class="text-sm font-black uppercase truncate">{{ configForm.referencia_nombre }}</h4>
+                                </div>
+                                <button @click="configForm.producto_id = null" class="h-8 w-8 bg-white/10 rounded-lg hover:bg-white/20 shrink-0 flex items-center justify-center">✕</button>
                             </div>
 
                             <div class="mt-6">
                                 <h3 class="text-[10px] font-black text-slate-800 uppercase mb-3 tracking-widest">2. Especificar Color</h3>
-                                <input v-model="configForm.color" type="text" class="w-full h-12 bg-slate-50 border-none rounded-xl font-black px-6 focus:ring-4 focus:ring-indigo-500/5 text-sm shadow-inner uppercase" placeholder="Ej: AZUL REY, CRISTAL...">
+                                <select v-model="configForm.color" class="w-full h-12 bg-slate-50 border-none rounded-xl font-black px-5 focus:ring-4 focus:ring-indigo-500/5 text-sm shadow-inner uppercase appearance-none" style="background-image: url('data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'M6 8l4 4 4-4\'/%3e%3c/svg%3e'); background-position: right 1rem center; background-repeat: no-repeat; background-size: 1.2em 1.2em;">
+                                    <option value="" disabled>SELECCIONAR COLOR...</option>
+                                    <option v-for="color in colores" :key="color.id" :value="color.nombre">{{ color.nombre }}</option>
+                                </select>
                             </div>
                         </div>
-                        <div class="lg:col-span-6 p-6 md:p-8 bg-slate-50/50 pr-16"> 
-                            <div class="flex justify-between items-center mb-4"><h3 class="text-[10px] font-black text-slate-800 uppercase tracking-widest">3. Mezcla (%)</h3><button @click="agregarFilaMaterial" class="text-[9px] font-black text-indigo-600 uppercase px-3 py-1.5 bg-white rounded-lg shadow-sm">+ Añadir</button></div>
-                            <div class="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                                <div v-for="(m, i) in configForm.mezcla" :key="i" class="flex gap-2 mb-2 animate-in slide-in-from-right-4">
-                                    <select v-model="m.materia_prima_id" class="flex-1 h-10 bg-white border-none rounded-xl text-[10px] font-bold shadow-sm text-slate-700">
+
+                        <div class="lg:col-span-6 p-6 md:p-8 bg-slate-50/50 rounded-b-[2rem] lg:rounded-bl-none lg:rounded-br-[2rem]"> 
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-[10px] font-black text-slate-800 uppercase tracking-widest">3. Mezcla (%)</h3>
+                                <button @click="agregarFilaMaterial" class="text-[9px] font-black text-indigo-600 uppercase px-3 py-1.5 bg-white rounded-lg shadow-sm hover:bg-indigo-50 transition-colors">+ Añadir Material</button>
+                            </div>
+                            
+                            <div class="space-y-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                                <div v-for="(m, i) in configForm.mezcla" :key="i" class="flex gap-2 items-center animate-in slide-in-from-right-4">
+                                    <select v-model="m.materia_prima_id" class="flex-1 min-w-0 h-11 bg-white border border-slate-100 rounded-xl text-[10px] font-bold shadow-sm text-slate-700 truncate appearance-none px-3" style="background-image: url('data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'M6 8l4 4 4-4\'/%3e%3c/svg%3e'); background-position: right 0.75rem center; background-repeat: no-repeat; background-size: 1em 1em;">
                                         <option value="" disabled>Seleccionar Material...</option>
                                         <option v-for="mat in materiales" :key="mat.id" :value="mat.id">{{ mat.nombre }}</option>
                                     </select>
-                                    <div class="w-20 flex items-center bg-white rounded-xl px-2 shadow-sm"><input type="number" v-model="m.porcentaje" class="w-full border-none text-right font-black text-indigo-600 text-xs focus:ring-0"><span class="text-[8px] font-bold text-slate-300 ml-1">%</span></div><button v-if="configForm.mezcla.length > 1" @click="quitarFilaMaterial(i)" class="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 transition-colors">✕</button>
+                                    <div class="w-24 h-11 flex items-center bg-white border border-slate-100 rounded-xl px-2 shadow-sm shrink-0">
+                                        <input type="number" v-model="m.porcentaje" class="w-full border-none h-full text-right font-black text-indigo-600 text-xs focus:ring-0 px-1 bg-transparent" placeholder="0">
+                                        <span class="text-[9px] font-black text-slate-300">%</span>
+                                    </div>
+                                    <button v-if="configForm.mezcla.length > 1" @click="quitarFilaMaterial(i)" class="h-10 w-10 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors shrink-0">✕</button>
                                 </div>
                             </div>
-                            <div class="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
-                                <p class="text-xl font-black font-mono" :class="totalMezcla === 100 ? 'text-emerald-500' : 'text-red-500'">{{ totalMezcla }}%</p>
-                                <button @click="guardarConfig" :disabled="!configForm.producto_id || totalMezcla !== 100" class="px-6 h-12 bg-emerald-500 text-white rounded-xl font-black text-[10px] uppercase shadow-lg disabled:opacity-20 transition-all">
-                                    {{ isEditingExisting ? 'Actualizar Fase' : 'Guardar 🚀' }}
+                            
+                            <div class="mt-6 pt-5 border-t border-slate-200 flex items-center justify-between">
+                                <div>
+                                    <p class="text-[9px] font-black uppercase text-slate-400 mb-0.5">Total Mezcla</p>
+                                    <p class="text-2xl font-black font-mono leading-none" :class="totalMezcla === 100 ? 'text-emerald-500' : 'text-red-500'">{{ totalMezcla }}%</p>
+                                </div>
+                                <button @click="guardarConfig" :disabled="!configForm.producto_id || totalMezcla !== 100" class="px-6 h-12 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg shadow-emerald-500/20 disabled:opacity-30 disabled:shadow-none transition-all flex items-center gap-2">
+                                    {{ isEditingExisting ? 'Actualizar Fase' : 'Guardar Configuración' }} 🚀
                                 </button>
                             </div>
                         </div>
@@ -540,7 +606,9 @@ const clonarVale = (i) => {
 
             <div class="space-y-4">
                 <div class="hidden lg:grid lg:grid-cols-12 px-10 mb-2 text-slate-400 font-black uppercase text-[9px] tracking-widest text-center">
-                    <div class="lg:col-span-2 text-left">Hora / Ref</div><div class="lg:col-span-3">Vale / Lote</div><div class="lg:col-span-1">Ciclo</div><div class="lg:col-span-1">Buenas</div><div class="lg:col-span-1">Cav</div><div class="lg:col-span-4">Acciones</div>
+                    <div class="lg:col-span-2 text-left">Hora / Ref</div>
+                    <div class="lg:col-span-3">Lote / Tula</div> <!-- <-- TITULO ACTUALIZADO -->
+                    <div class="lg:col-span-1">Ciclo</div><div class="lg:col-span-1">Buenas</div><div class="lg:col-span-1">Cav. Activas</div><div class="lg:col-span-4">Acciones</div>
                 </div>
 
                 <div v-for="(reg, i) in registros" :key="i" 
@@ -554,12 +622,16 @@ const clonarVale = (i) => {
                             </span>
                         </div>
 
+                        <!-- <-- SECCIÓN DE LOTE Y TULA ACTUALIZADA -->
                         <div class="lg:col-span-3 flex flex-col">
-                            <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 ml-1 tracking-widest">Vale / Lote</span>
-                            <div class="flex items-center gap-2">
-                                <input type="text" v-model="reg.num_vale" @input="reg.modificado = true" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 text-sm shadow-inner uppercase" placeholder="0000">
-                                <button v-if="canEditRow(reg)" @click="clonarVale(i)" class="p-2 text-slate-200 hover:text-indigo-600 shrink-0 transition-colors">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg>
+                            <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 ml-1 tracking-widest">Lote / Tula</span>
+                            <div class="flex items-center gap-1.5">
+                                <input type="text" v-model="reg.num_vale" @input="reg.modificado = true" class="w-1/2 h-11 bg-slate-50 border-none rounded-xl text-center font-black text-slate-700 text-[10px] shadow-inner uppercase px-1" placeholder="LOTE">
+                                
+                                <input type="text" v-model="reg.num_tula" @input="reg.modificado = true" :class="['w-1/2 h-11 border-none rounded-xl text-center font-black text-[10px] shadow-inner uppercase px-1 transition-colors', !reg.num_tula ? 'bg-rose-50 text-rose-700 placeholder:text-rose-400 ring-1 ring-rose-200' : 'bg-slate-50 text-slate-700']" placeholder="TULA *">
+                                
+                                <button v-if="canEditRow(reg)" @click="clonarVale(i)" class="p-1 text-slate-200 hover:text-indigo-600 shrink-0 transition-colors" title="Clonar a la siguiente hora">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg>
                                 </button>
                             </div>
                         </div>
@@ -571,20 +643,24 @@ const clonarVale = (i) => {
                              </div>
                              <div class="lg:col-span-1 flex flex-col">
                                 <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 text-center tracking-widest">Buenas</span>
-                                <input type="number" v-model="reg.buenas" @input="reg.modificado = true" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-lg text-indigo-600 shadow-inner" placeholder="0">
+                                <input type="number" v-model="reg.buenas" @input="reg.modificado = true" class="w-full h-11 bg-blue-50/50 border-none rounded-xl text-center font-black text-lg text-indigo-600 shadow-inner" placeholder="0" readonly>
                              </div>
-                             <div class="lg:col-span-1 flex flex-col">
+                             <div class="lg:col-span-1 flex flex-col relative group/cav">
                                 <span class="lg:hidden text-[9px] font-black text-slate-400 uppercase mb-1 text-center tracking-widest">Cav</span>
-                                <input type="number" v-model="reg.cav" @input="calcularBuenasAutomatico(i); reg.modificado = true" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-lg text-slate-400 shadow-inner" placeholder="0">
+                                <input type="number" v-model="reg.cav" @input="alCambiarCavidadesManual(i)" class="w-full h-11 bg-slate-50 border-none rounded-xl text-center font-black text-lg text-slate-400 shadow-inner" placeholder="0" readonly>
+                                <div v-if="reg.cavidades_anuladas > 0" class="absolute -top-2 -right-2 bg-slate-800 text-white text-[8px] font-black px-2 py-0.5 rounded-md shadow-lg">
+                                    -{{ reg.cavidades_anuladas }} Anuladas
+                                </div>
                              </div>
                         </div>
                         
                         <div class="lg:col-span-4 flex gap-1 pt-2 lg:pt-0">
                             <button @click="abrirInspeccion(i)" 
-                                :class="['flex-1 h-11 rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center gap-1 border', 
+                                :class="['flex-1 h-11 rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center gap-1 border relative', 
                                 reg.inspeccion_completada ? 'bg-emerald-100 text-emerald-600 border-emerald-200' : 'bg-red-50 text-red-500 border-red-100 animate-pulse']">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 12l2 2 4-4" /></svg>
                                 PREFORMAS
+                                <span v-if="reg.cavidades_anuladas > 0" class="absolute -bottom-1 -right-1 w-3 h-3 bg-slate-800 rounded-full border border-white"></span>
                             </button>
 
                             <button @click="abrirPnc(i)" :class="['flex-1 h-11 rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center gap-1', reg.pnc.length > 0 ? 'bg-red-500 text-white shadow-md' : 'bg-slate-50 text-slate-400 border border-slate-100']">
@@ -604,6 +680,69 @@ const clonarVale = (i) => {
                 </div>
             </div>
         </div>
+
+        <!-- MODAL PREFORMAS (OPTIMIZADO UX) -->
+        <transition name="fade">
+            <div v-if="modalInspeccion" class="fixed inset-0 z-[130] flex items-center justify-center p-2 bg-slate-900/80 backdrop-blur-md">
+                <div class="bg-white w-full max-w-lg rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[95vh] animate-in zoom-in-95">
+                    <div class="p-6 border-b flex justify-between items-center bg-slate-50">
+                        <div>
+                            <h3 class="text-sm font-black text-slate-800 uppercase leading-none">Inspección de Preformas</h3>
+                            <p class="text-[9px] font-bold text-indigo-600 uppercase mt-1">Hora: {{ registros[indexActivo].hora }} | Cavidades Molde: {{ getCavidadesEstandar(indexActivo) }}</p>
+                        </div>
+                        <button @click="modalInspeccion = false" class="h-8 w-8 bg-white rounded-full shadow-sm text-slate-400 flex items-center justify-center hover:bg-red-50 hover:text-red-500 transition-all">✕</button>
+                    </div>
+                    
+                    <div class="p-4 flex-grow overflow-y-auto custom-scrollbar">
+                        <div class="grid grid-cols-6 gap-2 mb-6">
+                            <button v-for="n in getCavidadesEstandar(indexActivo)" :key="n" @click="cavidadSeleccionada = n"
+                                :class="['h-12 rounded-xl text-[10px] font-black border-2 transition-all flex flex-col items-center justify-center', 
+                                cavidadSeleccionada === n ? 'border-indigo-600 bg-blue-50 text-indigo-600 scale-110 z-10' : 
+                                (esAnulada(n) ? 'border-slate-800 bg-slate-900 text-slate-400 opacity-80' : 
+                                (tieneDefecto(n) ? 'border-red-500 bg-red-50 text-red-600' : 'border-emerald-500 bg-emerald-50 text-emerald-600'))]">
+                                
+                                <span class="opacity-40 text-[7px]">CAV</span>{{ n }}
+                                
+                                <span v-if="esAnulada(n)" class="text-[8px] mt-0.5 text-white">ANULADA</span>
+                                <span v-else-if="tieneDefecto(n)" class="text-[8px] mt-0.5">Def: {{ getNombreDefecto(n) }}</span>
+                                <span v-else class="text-[8px] mt-0.5 opacity-40">OK</span>
+                            </button>
+                        </div>
+                        
+                        <div v-if="cavidadSeleccionada" class="bg-slate-900 p-5 rounded-[2rem] shadow-2xl sticky bottom-0">
+                            <div class="flex justify-between items-center mb-3">
+                                <span class="text-white font-black text-[10px] uppercase">Defecto en Cavidad {{ cavidadSeleccionada }}</span>
+                                <button @click="cavidadSeleccionada = null" class="text-white/50 text-[10px] font-bold uppercase underline">Cancelar</button>
+                            </div>
+                            
+                            <button v-if="canEditRow(registros[indexActivo])" @click="asignarDefectoACavidad('ANULADA')" class="w-full mb-3 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl text-[10px] font-black uppercase border border-slate-700 shadow-md">
+                                🚫 Marcar Cavidad como Anulada (Bloqueada)
+                            </button>
+
+                            <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5 max-h-[35vh] overflow-y-auto custom-scrollbar pr-2 mb-3">
+                                <button v-for="d in pncCatalogo" :key="d.id" @click="asignarDefectoACavidad(d.id)" class="bg-white/10 hover:bg-white/20 text-white px-1.5 py-2 rounded-lg text-[8px] md:text-[9px] font-bold border border-white/5 transition-all flex items-center justify-center text-center leading-tight min-h-[40px]">
+                                    {{ d.nombre }}
+                                </button>
+                            </div>
+                            
+                            <button v-if="canEditRow(registros[indexActivo])" @click="asignarDefectoACavidad(null)" class="w-full py-2.5 bg-emerald-600/20 text-emerald-400 rounded-xl text-[9px] font-black uppercase border border-emerald-500/20 hover:bg-emerald-600/40">
+                                ✓ Marcar como Cavidad Óptima (OK)
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="p-6 bg-slate-50 border-t flex gap-3">
+                        <button v-if="!canEditRow(registros[indexActivo])" @click="modalInspeccion = false" class="flex-1 py-4 bg-slate-400 text-white rounded-2xl font-black text-xs uppercase shadow-xl transition-all">
+                            CERRAR VISUALIZACIÓN
+                        </button>
+                        <template v-else>
+                            <button v-if="registros[indexActivo].inspeccion.length === 0" @click="finalizarInspeccion" class="flex-1 py-4 bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-emerald-600 transition-all">TODAS LAS CAVIDADES OK √</button>
+                            <button v-else @click="finalizarInspeccion" class="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-black">CONFIRMAR REGISTROS ({{ registros[indexActivo].inspeccion.length }})</button>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </transition>
 
         <transition name="fade">
             <div v-if="modalPnc" class="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -673,51 +812,12 @@ const clonarVale = (i) => {
             </div>
         </transition>
 
-        <transition name="fade">
-            <div v-if="modalInspeccion" class="fixed inset-0 z-[130] flex items-center justify-center p-2 bg-slate-900/80 backdrop-blur-md">
-                <div class="bg-white w-full max-w-lg rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[95vh] animate-in zoom-in-95">
-                    <div class="p-6 border-b flex justify-between items-center bg-slate-50">
-                        <div><h3 class="text-sm font-black text-slate-800 uppercase leading-none">Inspección de Preformas</h3><p class="text-[9px] font-bold text-indigo-600 uppercase mt-1">Hora: {{ registros[indexActivo].hora }} | Cavidades Reportadas: {{ registros[indexActivo].cav }}</p></div>
-                        <button @click="modalInspeccion = false" class="h-8 w-8 bg-white rounded-full shadow-sm text-slate-400 flex items-center justify-center hover:bg-red-50 hover:text-red-500 transition-all">✕</button>
-                    </div>
-                    <div class="p-4 flex-grow overflow-y-auto custom-scrollbar">
-                        <div class="grid grid-cols-6 gap-2 mb-6">
-                            <button v-for="n in parseInt(registros[indexActivo].cav)" :key="n" @click="cavidadSeleccionada = n"
-                                :class="['h-12 rounded-xl text-[10px] font-black border-2 transition-all flex flex-col items-center justify-center', cavidadSeleccionada === n ? 'border-indigo-600 bg-blue-50 text-indigo-600 scale-110 z-10' : (registros[indexActivo].inspeccion.find(i => i.cav === n) ? 'border-red-500 bg-red-50 text-red-600' : 'border-emerald-500 bg-emerald-50 text-emerald-600')]">
-                                <span class="opacity-40 text-[7px]">CAV</span>{{ n }}
-                                <span v-if="registros[indexActivo].inspeccion.find(i => i.cav === n)" class="text-[8px] mt-0.5">Def: {{ pncCatalogo.find(p => p.id === registros[indexActivo].inspeccion.find(i => i.cav === n).defecto)?.nombre.substring(0,5) || '...' }}</span>
-                                <span v-else class="text-[8px] mt-0.5 opacity-40">OK</span>
-                            </button>
-                        </div>
-                        <div v-if="cavidadSeleccionada" class="bg-slate-900 p-6 rounded-[2rem] shadow-2xl sticky bottom-0">
-                            <div class="flex justify-between items-center mb-4"><span class="text-white font-black text-[10px] uppercase">Defecto en Cavidad {{ cavidadSeleccionada }}</span><button @click="cavidadSeleccionada = null" class="text-white/50 text-[10px] font-bold uppercase underline">Cancelar</button></div>
-                            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-2">
-                                <button v-for="d in pncCatalogo" :key="d.id" @click="asignarDefectoACavidad(d.id)" class="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg text-[9px] font-bold border border-white/5 transition-all text-center leading-tight">
-                                    {{ d.nombre }}
-                                </button>
-                                <button v-if="canEditRow(registros[indexActivo])" @click="asignarDefectoACavidad(null)" class="col-span-full mt-2 py-2.5 bg-red-600/30 text-red-300 rounded-xl text-[9px] font-black uppercase border border-red-500/20">Limpiar Defecto</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="p-6 bg-slate-50 border-t flex gap-3">
-                        <button v-if="!canEditRow(registros[indexActivo])" @click="modalInspeccion = false" class="flex-1 py-4 bg-slate-400 text-white rounded-2xl font-black text-xs uppercase shadow-xl transition-all">
-                            CERRAR VISUALIZACIÓN
-                        </button>
-                        <template v-else>
-                            <button v-if="registros[indexActivo].inspeccion.length === 0" @click="finalizarInspeccion" class="flex-1 py-4 bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-emerald-600 transition-all">TODAS LAS CAVIDADES OK √</button>
-                            <button v-else @click="finalizarInspeccion" class="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase shadow-xl">CONFIRMAR DEFECTOS ({{ registros[indexActivo].inspeccion.length }})</button>
-                        </template>
-                    </div>
-                </div>
-            </div>
-        </transition>
-
     </AuthenticatedLayout>
 </template>
 
 <style scoped>
 .font-mono { font-family: 'JetBrains Mono', monospace; }
-.custom-scrollbar::-webkit-scrollbar { height: 2px; width: 4px; }
+.custom-scrollbar::-webkit-scrollbar { height: 4px; width: 4px; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
 input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .expand-enter-active, .expand-leave-active { transition: all 0.4s ease-in-out; max-height: 1000px; }

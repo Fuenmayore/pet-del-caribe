@@ -7,10 +7,10 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        // 1. Catálogo de Máquinas
         Schema::create('maquinas', function (Blueprint $table) {
             $table->id();
             $table->string('nombre');
+            $table->string('abreviacion')->nullable(); // <-- NUEVO CAMPO
             $table->enum('sub_area', ['Inyeccion', 'Soplado'])->default('Inyeccion');
             $table->softDeletes();
             $table->timestamps();
