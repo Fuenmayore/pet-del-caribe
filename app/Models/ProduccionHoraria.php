@@ -4,15 +4,32 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProduccionHoraria extends Model
 {
-    use HasUuids; // Según tu ERD, usas UUID
-    protected $table = 'produccion_horaria';
-    protected $fillable = ['config_id', 'hora', 'unidades_buenas'];
+    use HasUuids, SoftDeletes;
 
-    // Relación: Una hora tiene muchos registros de desperdicio (PNC)
-    public function registrosPnc() {
-        return $this->hasMany(RegistrosPnc::class, 'produccion_hora_id');
-    }   
+    protected $table = 'produccion_horaria';
+
+    protected $fillable = [
+        'config_id', 
+        'hora', 
+        'num_vale_inyectora', 
+        'unidades_buenas', 
+        'pnc_detalle' // JSON: Aquí vive todo el desperdicio de la hora
+    ];
+
+    /**
+     * Cast para que al llamar $hora->pnc_detalle recibas un array
+     */
+    protected $casts = [
+        'pnc_detalle' => 'array',
+    ];
+
+    public function configuracion(): BelongsTo
+    {
+        return $this->belongsTo(ProduccionConfig::class, 'config_id');
+    }
 }
